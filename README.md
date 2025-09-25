@@ -1,5 +1,7 @@
 # 🔍 Kasten Discovery Report v1.0 - Enhanced for Kasten 7.5+ & 8.0+
 
+UNDER MASSIVE DEV
+
 ## Overview
 
 The **Kasten Discovery Report v1.0** is an advanced discovery and audit tool for Kasten K10 deployments. **Specifically optimized for Kasten K10 versions 7.5.1 to 8.0.8** and designed for **OpenShift 4.12, 4.14, 4.16, and 4.18**.
@@ -257,5 +259,5 @@ WIP
 
 ---
 
-**Developed by the Kasten community**  
+**Developed by the EMEA TAM team**  
 Version 1.0 | Compatible with OpenShift 4.12-4.18 | September 2025
