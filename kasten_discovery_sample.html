@@ -1,0 +1,1422 @@
+                        <td>2025-09-06 14:15:00</td>
+                        <td><span class="no-violations">✅ No violations</span></td>
+                    </tr>
+                    <tr style="background: #f8fff8;">
+                        <td><strong>s3-database-backup</strong></td>
+                        <td><span class="status status-enabled">ENABLED</span></td>
+                        <td>COMPLIANCE</td>
+                        <td>5 years</td>
+                        <td><span class="status status-compliance">COMPLIANCE</span></td>
+                        <td><span class="status status-success">NONE</span></td>
+                        <td>2025-01-20 14:30:00</td>
+                        <td><span class="no-violations">✅ No violations</span></td>
+                    </tr>
+                    <tr style="background: #fffef8;">
+                        <td><strong>azure-dev-backup</strong></td>
+                        <td><span class="status status-enabled">ENABLED</span></td>
+                        <td>GOVERNANCE</td>
+                        <td>30 days</td>
+                        <td><span class="status status-governance">GOVERNANCE</span></td>
+                        <td><span class="status status-success">NONE</span></td>
+                        <td>2025-01-20 14:30:00</td>
+                        <td>
+                            <button class="expand-btn" onclick="toggleExpand(this)">▶</button>
+                            <div class="expandable">
+                                <div class="violation-item">⚠️ Short retention period for development data</div>
+                                <div class="violation-item">⚠️ Consider extending to 90+ days for better recovery options</div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr style="background: #fff5f5;">
+                        <td><strong>nfs-local-storage</strong></td>
+                        <td><span class="status status-disabled">DISABLED</span></td>
+                        <td>N/A</td>
+                        <td>N/A</td>
+                        <td><span class="status status-disabled">DISABLED</span></td>
+                        <td><span class="status status-success">NONE</span></td>
+                        <td>2025-01-20 14:30:00</td>
+                        <td>
+                            <button class="expand-btn" onclick="toggleExpand(this)">▶</button>
+                            <div class="expandable">
+                                <div class="violation-item">❌ No immutability protection configured</div>
+                                <div class="violation-item">❌ Vulnerable to ransomware attacks</div>
+                                <div class="violation-item">❌ Consider enabling WORM features or migrate to object storage</div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr style="background: #fff5f5;">
+                        <td><strong>legacy-backup-server</strong></td>
+                        <td><span class="status status-disabled">DISABLED</span></td>
+                        <td>N/A</td>
+                        <td>N/A</td>
+                        <td><span class="status status-disabled">DISABLED</span></td>
+                        <td><span class="status status-success">NONE</span></td>
+                        <td>2025-01-20 14:30:00</td>
+                        <td>
+                            <button class="expand-btn" onclick="toggleExpand(this)">▶</button>
+                            <div class="expandable">
+                                <div class="violation-item">❌ Legacy storage without immutability support</div>
+                                <div class="violation-item">❌ High risk for data tampering</div>
+                                <div class="violation-item">❌ Immediate migration to modern storage recommended</div>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="recommendation-box">
+                <h4>🎯 Immutability Recommendations</h4>
+                <ul>
+                    <li><strong>Critical Action:</strong> Migrate data from legacy-backup-server and nfs-local-storage to immutable storage</li>
+                    <li><strong>Compliance Enhancement:</strong> Consider upgrading azure-dev-backup from Governance to Compliance mode</li>
+                    <li><strong>Retention Optimization:</strong> Extend development backup retention to 90+ days for better point-in-time recovery</li>
+                    <li><strong>Security Audit:</strong> Review legal hold procedures for financial data compliance</li>
+                    <li><strong>Monitoring Setup:</strong> Implement alerts for any changes to immutability settings</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="dr-tab" class="tab-content">
+            <div class="immutability-highlight">
+                <h3>🔄 Kasten Disaster Recovery Status</h3>
+                <p><strong>DR Status:</strong> Active | <strong>Health:</strong> Healthy | <strong>Last Sync:</strong> 2025-09-06 14:25:00 CET</p>
+            </div>
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th>Configuration</th>
+                        <th>Value</th>
+                        <th>Status</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Primary Cluster</strong></td>
+                        <td>prod-east-cluster</td>
+                        <td><span class="status status-active">ACTIVE</span></td>
+                        <td>Current cluster role</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Secondary Cluster</strong></td>
+                        <td>prod-west-cluster</td>
+                        <td><span class="status status-synced">SYNCED</span></td>
+                        <td>DR target cluster</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Replication Lag</strong></td>
+                        <td>< 2 min</td>
+                        <td><span class="status status-good">GOOD</span></td>
+                        <td>Data synchronization delay</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Failover Capability</strong></td>
+                        <td>Ready</td>
+                        <td><span class="status status-ready">READY</span></td>
+                        <td>Disaster recovery readiness</td>
+                    </tr>
+                    <tr>
+                        <td><strong>DR Policies</strong></td>
+                        <td>5 policies</td>
+                        <td><span class="status status-success">CONFIGURED</span></td>
+                        <td>
+                            <button class="expand-btn" onclick="toggleExpand(this)">▶</button>
+                            <div class="expandable">
+                                <div>financial-dr-policy</div>
+                                <div>database-dr-policy</div>
+                                <div>critical-apps-dr-policy</div>
+                                <div>compliance-dr-policy</div>
+                                <div>infrastructure-dr-policy</div>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <div class="recommendation-box">
+                <h4>✅ DR Configuration Health</h4>
+                <ul>
+                    <li style="color: #28a745;"><strong>Excellent:</strong> Cross-cluster replication is active and healthy</li>
+                    <li style="color: #28a745;"><strong>Ready:</strong> Failover capability fully operational</li>
+                    <li style="color: #28a745;"><strong>Compliant:</strong> All critical applications have DR policies</li>
+                    <li style="color: #0066cc;"><strong>Recommendation:</strong> Schedule quarterly DR failover tests</li>
+                    <li style="color: #0066cc;"><strong>Monitoring:</strong> Set up alerts for replication lag > 5 minutes</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="profiles-tab" class="tab-content">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Location</th>
+                        <th>Immutability</th>
+                        <th>DR Enabled</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>s3-financial-backup</strong></td>
+                        <td>ObjectStore (S3)</td>
+                        <td>s3://company-financial-backups/kasten</td>
+                        <td><span class="status status-compliance">IMMUTABLE</span></td>
+                        <td><span class="status status-success">YES</span></td>
+                        <td><span class="status status-success">READY</span></td>
+                        <td>2024-08-15 10:30:00</td>
+                    </tr>
+                    <tr>
+                        <td><strong>azure-prod-backup</strong></td>
+                        <td>ObjectStore (Azure)</td>
+                        <td>https://prodbackups.blob.core.windows.net</td>
+                        <td><span class="status status-governance">IMMUTABLE</span></td>
+                        <td><span class="status status-success">YES</span></td>
+                        <td><span class="status status-success">READY</span></td>
+                        <td>2024-09-01 14:20:00</td>
+                    </tr>
+                    <tr>
+                        <td><strong>s3-database-backup</strong></td>
+                        <td>ObjectStore (S3)</td>
+                        <td>s3://company-db-backups/kasten</td>
+                        <td><span class="status status-compliance">IMMUTABLE</span></td>
+                        <td><span class="status status-success">YES</span></td>
+                        <td><span class="status status-success">READY</span></td>
+                        <td>2024-07-20 09:15:00</td>
+                    </tr>
+                    <tr>
+                        <td><strong>azure-dev-backup</strong></td>
+                        <td>ObjectStore (Azure)</td>
+                        <td>https://devbackups.blob.core.windows.net</td>
+                        <td><span class="status status-governance">IMMUTABLE</span></td>
+                        <td><span class="status status-partial">PARTIAL</span></td>
+                        <td><span class="status status-success">READY</span></td>
+                        <td>2024-11-10 16:45:00</td>
+                    </tr>
+                    <tr>
+                        <td><strong>nfs-local-storage</strong></td>
+                        <td>FileSystem (NFS)</td>
+                        <td>nfs://backup-server.local/kasten</td>
+                        <td><span class="status status-failed">NONE</span></td>
+                        <td><span class="status status-failed">NO</span></td>
+                        <td><span class="status status-warning">DEGRADED</span></td>
+                        <td>2023-12-05 11:30:00</td>
+                    </tr>
+                    <tr>
+                        <td><strong>legacy-backup-server</strong></td>
+                        <td>FileSystem (SMB)</td>
+                        <td>\\backup-legacy\kasten-backups</td>
+                        <td><span class="status status-failed">NONE</span></td>
+                        <td><span class="status status-failed">NO</span></td>
+                        <td><span class="status status-warning">DEPRECATED</span></td>
+                        <td>2023-06-15 08:00:00</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div id="applications-tab" class="tab-content">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Namespace</th>
+                        <th>Protection Status</th>
+                        <th>Last Backup</th>
+                        <th>Immutable Storage</th>
+                        <th>DR Protected</th>
+                        <th>Backup Count</th>
+                        <th>Policies</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>payment-service</strong></td>
+                        <td>finance</td>
+                        <td><span class="status status-success">PROTECTED</span></td>
+                        <td>2025-01-20 12:00:00</td>
+                        <td><span class="status status-compliance">YES</span></td>
+                        <td><span class="status status-success">YES</span></td>
+                        <td>852</td>
+                        <td>2</td>
+                    </tr>
+                    <tr>
+                        <td><strong>postgres-prod</strong></td>
+                        <td>databases</td>
+                        <td><span class="status status-success">PROTECTED</span></td>
+                        <td>2025-01-20 02:00:00</td>
+                        <td><span class="status status-compliance">YES</span></td>
+                        <td><span class="status status-success">YES</span></td>
+                        <td>370</td>
+                        <td>2</td>
+                    </tr>
+                    <tr>
+                        <td><strong>billing-app</strong></td>
+                        <td>finance</td>
+                        <td><span class="status status-success">PROTECTED</span></td>
+                        <td>2025-01-20 12:00:00</td>
+                        <td><span class="status status-compliance">YES</span></td>
+                        <td><span class="status status-success">YES</span></td>
+                        <td>428</td>
+                        <td>1</td>
+                    </tr>
+                    <tr>
+                        <td><strong>mysql-cluster</strong></td>
+                        <td>databases</td>
+                        <td><span class="status status-success">PROTECTED</span></td>
+                        <td>2025-01-20 02:00:00</td>
+                        <td><span class="status status-governance">PARTIAL</span></td>
+                        <td><span class="status status-success">YES</span></td>
+                        <td>370</td>
+                        <td>1</td>
+                    </tr>
+                    <tr>
+                        <td><strong>api-gateway</strong></td>
+                        <td>infrastructure</td>
+                        <td><span class="status status-success">PROTECTED</span></td>
+                        <td>2025-01-20 06:00:00</td>
+                        <td><span class="status status-governance">PARTIAL</span></td>
+                        <td><span class="status status-success">YES</span></td>
+                        <td>148</td>
+                        <td>1</td>
+                    </tr>
+                    <tr>
+                        <td><strong>auth-service</strong></td>
+                        <td>infrastructure</td>
+                        <td><span class="status status-success">PROTECTED</span></td>
+                        <td>2025-01-20 06:00:00</td>
+                        <td><span class="status status-governance">PARTIAL</span></td>
+                        <td><span class="status status-success">YES</span></td>
+                        <td>148</td>
+                        <td>1</td>
+                    </tr>
+                    <tr>
+                        <td><strong>frontend-dev</strong></td>
+                        <td>development</td>
+                        <td><span class="status status-success">PROTECTED</span></td>
+                        <td>2025-01-19 22:00:00</td>
+                        <td><span class="status status-governance">PARTIAL</span></td>
+                        <td><span class="status status-failed">NO</span></td>
+                        <td>53</td>
+                        <td>1</td>
+                    </tr>
+                    <tr>
+                        <td><strong>api-dev</strong></td>
+                        <td>development</td>
+                        <td><span class="status status-success">PROTECTED</span></td>
+                        <td>2025-01-19 22:00:00</td>
+                        <td><span class="status status-governance">PARTIAL</span></td>
+                        <td><span class="status status-failed">NO</span></td>
+                        <td>53</td>
+                        <td>1</td>
+                    </tr>
+                    <tr>
+                        <td><strong>logging-service</strong></td>
+                        <td>monitoring</td>
+                        <td><span class="status status-warning">AT RISK</span></td>
+                        <td>2025-01-15 03:00:00</td>
+                        <td><span class="status status-failed">NO</span></td>
+                        <td><span class="status status-failed">NO</span></td>
+                        <td>12</td>
+                        <td>0</td>
+                    </tr>
+                    <tr>
+                        <td><strong>cache-redis</strong></td>
+                        <td>cache</td>
+                        <td><span class="status status-failed">UNPROTECTED</span></td>
+                        <td>Never</td>
+                        <td><span class="status status-failed">NO</span></td>
+                        <td><span class="status status-failed">NO</span></td>
+                        <td>0</td>
+                        <td>0</td>
+                    </tr>
+                    <tr>
+                        <td><strong>monitoring-stack</strong></td>
+                        <td>monitoring</td>
+                        <td><span class="status status-failed">UNPROTECTED</span></td>
+                        <td>Never</td>
+                        <td><span class="status status-failed">NO</span></td>
+                        <td><span class="status status-failed">NO</span></td>
+                        <td>0</td>
+                        <td>0</td>
+                    </tr>
+                    <tr>
+                        <td><strong>message-queue</strong></td>
+                        <td>infrastructure</td>
+                        <td><span class="status status-warning">AT RISK</span></td>
+                        <td>2025-01-18 12:00:00</td>
+                        <td><span class="status status-failed">NO</span></td>
+                        <td><span class="status status-failed">NO</span></td>
+                        <td>8</td>
+                        <td>0</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-header">
+            <span>⚡</span>
+            Recent Backup Operations
+        </div>
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('backup-actions-tab', this)">Backup Actions</div>
+            <div class="tab" onclick="switchTab('restore-actions-tab', this)">Restore Actions</div>
+            <div class="tab" onclick="switchTab('events-tab', this)">System Events</div>
+        </div>
+        
+        <div id="backup-actions-tab" class="tab-content active">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Action Name</th>
+                        <th>Application</th>
+                        <th>Storage Profile</th>
+                        <th>Immutable</th>
+                        <th>DR Replicated</th>
+                        <th>Status</th>
+                        <th>Duration</th>
+                        <th>Size</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>backup-financial-20250120-1200</strong></td>
+                        <td>payment-service</td>
+                        <td>s3-financial-backup</td>
+                        <td><span class="status status-compliance">YES</span></td>
+                        <td><span class="status status-success">YES</span></td>
+                        <td><span class="status status-success">COMPLETE</span></td>
+                        <td>00:04:15</td>
+                        <td>2.9 GB</td>
+                    </tr>
+                    <tr>
+                        <td><strong>backup-postgres-20250120-0200</strong></td>
+                        <td>postgres-prod</td>
+                        <td>s3-database-backup</td>
+                        <td><span class="status status-compliance">YES</span></td>
+                        <td><span class="status status-success">YES</span></td>
+                        <td><span class="status status-success">COMPLETE</span></td>
+                        <td>00:11:42</td>
+                        <td>16.2 GB</td>
+                    </tr>
+                    <tr>
+                        <td><strong>backup-api-gateway-20250120-0600</strong></td>
+                        <td>api-gateway</td>
+                        <td>azure-prod-backup</td>
+                        <td><span class="status status-governance">PARTIAL</span></td>
+                        <td><span class="status status-success">YES</span></td>
+                        <td><span class="status status-success">COMPLETE</span></td>
+                        <td>00:03:28</td>
+                        <td>1.8 GB</td>
+                    </tr>
+                    <tr>
+                        <td><strong>backup-dev-apps-20250119-2200</strong></td>
+                        <td>frontend-dev</td>
+                        <td>azure-dev-backup</td>
+                        <td><span class="status status-governance">PARTIAL</span></td>
+                        <td><span class="status status-failed">NO</span></td>
+                        <td><span class="status status-success">COMPLETE</span></td>
+                        <td>00:02:33</td>
+                        <td>1.3 GB</td>
+                    </tr>
+                    <tr>
+                        <td><strong>backup-logging-20250115-0300</strong></td>
+                        <td>logging-service</td>
+                        <td>nfs-local-storage</td>
+                        <td><span class="status status-failed">NO</span></td>
+                        <td><span class="status status-failed">NO</span></td>
+                        <td><span class="status status-failed">FAILED</span></td>
+                        <td>00:15:00</td>
+                        <td>0 GB</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div id="restore-actions-tab" class="tab-content">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Restore Name</th>
+                        <th>Application</th>
+                        <th>Source Profile</th>
+                        <th>Immutable Source</th>
+                        <th>Status</th>
+                        <th>Duration</th>
+                        <th>Restore Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>restore-payment-test-20250119</strong></td>
+                        <td>payment-service-test</td>
+                        <td>s3-financial-backup</td>
+                        <td><span class="status status-compliance">YES</span></td>
+                        <td><span class="status status-success">COMPLETE</span></td>
+                        <td>00:06:15</td>
+                        <td>2025-01-19 15:30:00</td>
+                    </tr>
+                    <tr>
+                        <td><strong>restore-db-disaster-20250118</strong></td>
+                        <td>postgres-prod-dr</td>
+                        <td>s3-database-backup</td>
+                        <td><span class="status status-compliance">YES</span></td>
+                        <td><span class="status status-success">COMPLETE</span></td>
+                        <td>00:17:45</td>
+                        <td>2025-01-18 08:15:00</td>
+                    </tr>
+                    <tr>
+                        <td><strong>restore-dev-rollback-20250117</strong></td>
+                        <td>frontend-dev</td>
+                        <td>azure-dev-backup</td>
+                        <td><span class="status status-governance">PARTIAL</span></td>
+                        <td><span class="status status-success">COMPLETE</span></td>
+                        <td>00:03:12</td>
+                        <td>2025-01-17 11:45:00</td>
+                    </tr>
+                    <tr>
+                        <td><strong>dr-failover-test-20250116</strong></td>
+                        <td>critical-apps</td>
+                        <td>azure-prod-backup</td>
+                        <td><span class="status status-governance">PARTIAL</span></td>
+                        <td><span class="status status-success">COMPLETE</span></td>
+                        <td>00:12:33</td>
+                        <td>2025-01-16 10:00:00</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div id="events-tab" class="tab-content">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Event</th>
+                        <th>Object</th>
+                        <th>Message</th>
+                        <th>Timestamp</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><span class="status status-success">Normal</span></td>
+                        <td>DRReplicationSuccess</td>
+                        <td>Policy/financial-data-policy</td>
+                        <td>Cross-cluster replication completed successfully - RTO target met</td>
+                        <td>2025-01-20 12:04:15</td>
+                    </tr>
+                    <tr>
+                        <td><span class="status status-success">Normal</span></td>
+                        <td>ImmutabilityEnabled</td>
+                        <td>Profile/s3-financial-backup</td>
+                        <td>Object lock compliance mode active with 7-year retention - legal hold enforced</td>
+                        <td>2025-01-20 12:00:30</td>
+                    </tr>
+                    <tr>
+                        <td><span class="status status-warning">Warning</span></td>
+                        <td>ImmutabilityMissing</td>
+                        <td>Profile/nfs-local-storage</td>
+                        <td>Storage profile lacks immutability protection - high security risk detected</td>
+                        <td>2025-01-20 14:30:00</td>
+                    </tr>
+                    <tr>
+                        <td><span class="status status-success">Normal</span></td>
+                        <td>BackupCompleted</td>
+                        <td>Policy/production-databases</td>
+                        <td>Database backup completed with snapshot consistency - 16.2 GB transferred</td>
+                        <td>2025-01-20 02:11:42</td>
+                    </tr>
+                    <tr>
+                        <td><span class="status status-success">Normal</span></td>
+                        <td>DRHealthCheck</td>
+                        <td>Cluster/prod-west-cluster</td>
+                        <td>Secondary cluster health verified - failover capability confirmed</td>
+                        <td>2025-01-20 14:40:00</td>
+                    </tr>
+                    <tr>
+                        <td><span class="status status-failed">Critical</span></td>
+                        <td>BackupFailed</td>
+                        <td>Application/logging-service</td>
+                        <td>Backup failed to non-immutable storage - recommend immediate profile migration</td>
+                        <td>2025-01-15 03:15:00</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-header">
+            <span>📋</span>
+            Executive Summary & Recommendations
+        </div>
+        <div class="section-content" style="padding: 30px;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px;">
+                <div>
+                    <h3 style="color: #2c5aa0; margin: 0 0 15px 0;">🛡️ Security Posture</h3>
+                    <ul style="line-height: 1.8;">
+                        <li><strong>67% immutability coverage</strong> - 4 of 6 profiles protected</li>
+                        <li><strong>75% applications protected</strong> - 9 of 12 applications</li>
+                        <li><strong>2 compliance-grade profiles</strong> with legal hold support</li>
+                        <li><strong>✅ DR enabled and healthy</strong> - Cross-cluster protection active</li>
+                        <li><strong>2 critical security gaps</strong> require immediate attention</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 style="color: #2c5aa0; margin: 0 0 15px 0;">📊 Operational Health</h3>
+                    <ul style="line-height: 1.8;">
+                        <li><strong>96% backup success rate</strong> - 27 of 28 recent actions</li>
+                        <li><strong>100% pod availability</strong> - all Kasten services running</li>
+                        <li><strong>4.2 TB total backup storage</strong> across all profiles</li>
+                        <li><strong>< 2 min DR replication lag</strong> - excellent RTO/RPO</li>
+                        <li><strong>4 successful DR tests</strong> completed this month</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="recommendation-box">
+                <h4>🎯 Priority Action Items</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <div>
+                        <h5 style="color: #dc3545; margin: 10px 0;">🚨 Critical (Immediate)</h5>
+                        <ul>
+                            <li>Migrate nfs-local-storage to immutable object storage</li>
+                            <li>Decommission legacy-backup-server</li>
+                            <li>Configure backup policies for cache-redis and monitoring-stack</li>
+                            <li>Enable DR protection for development applications</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h5 style="color: #ffc107; margin: 10px 0;">⚠️ Important (This Week)</h5>
+                        <ul>
+                            <li>Extend dev backup retention to 90+ days</li>
+                            <li>Review legal hold procedures with compliance team</li>
+                            <li>Set up immutability monitoring alerts</li>
+                            <li>Schedule quarterly DR failover test</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div style="background: #e8f5e8; border: 1px solid #c3e6c3; border-radius: 8px; padding: 20px; margin-top: 20px;">
+                <h4 style="color: #28a745; margin: 0 0 15px 0;">✅ Strengths & Best Practices</h4>
+                <ul style="margin: 0;">
+                    <li>Robust disaster recovery with cross-cluster replication and < 2 min lag</li>
+                    <li>Strong financial data protection with compliance-grade immutability and legal hold</li>
+                    <li>Excellent backup automation with 96% success rate</li>
+                    <li>Proper segregation of production and development backup policies</li>
+                    <li>Active monitoring with proactive DR health checks</li>
+                    <li>Successful DR testing program with regular failover validation</li>
+                    <li>Comprehensive event logging and audit trail maintenance</li>
+                </ul>
+            </div>
+
+            <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 20px; margin-top: 15px;">
+                <h4 style="color: #856404; margin: 0 0 15px 0;">📈 Key Metrics Dashboard</h4>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px;">
+                    <div style="text-align: center; padding: 15px; background: white; border-radius: 8px;">
+                        <div style="font-size: 1.8em; font-weight: bold; color: #28a745;">67%</div>
+                        <div style="font-size: 0.9em; color: #666;">Immutability Coverage</div>
+                    </div>
+                    <div style="text-align: center; padding: 15px; background: white; border-radius: 8px;">
+                        <div style="font-size: 1.8em; font-weight: bold; color: #28a745;">✅</div>
+                        <div style="font-size: 0.9em; color: #666;">DR Health Status</div>
+                    </div>
+                    <div style="text-align: center; padding: 15px; background: white; border-radius: 8px;">
+                        <div style="font-size: 1.8em; font-weight: bold; color: #17a2b8;">2 min</div>
+                        <div style="font-size: 0.9em; color: #666;">Replication Lag</div>
+                    </div>
+                    <div style="text-align: center; padding: 15px; background: white; border-radius: 8px;">
+                        <div style="font-size: 1.8em; font-weight: bold; color: #ffc107;">3</div>
+                        <div style="font-size: 0.9em; color: #666;">Unprotected Apps</div>
+                    </div>
+                    <div style="text-align: center; padding: 15px; background: white; border-radius: 8px;">
+                        <div style="font-size: 1.8em; font-weight: bold; color: #28a745;">4.2 TB</div>
+                        <div style="font-size: 0.9em; color: #666;">Protected Data</div>
+                    </div>
+                    <div style="text-align: center; padding: 15px; background: white; border-radius: 8px;">
+                        <div style="font-size: 1.8em; font-weight: bold; color: #28a745;">96%</div>
+                        <div style="font-size: 0.9em; color: #666;">Success Rate</div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="background: #e7f3ff; border: 1px solid #bee5eb; border-radius: 8px; padding: 20px; margin-top: 15px;">
+                <h4 style="color: #004085; margin: 0 0 15px 0;">🔮 Next Quarter Roadmap</h4>
+                <ul style="margin: 0;">
+                    <li><strong>Q1 2025 Goals:</strong> Achieve 95% immutability coverage, complete legacy storage migration</li>
+                    <li><strong>Compliance Initiative:</strong> Implement automated compliance reporting and audit trails</li>
+                    <li><strong>DR Enhancement:</strong> Reduce replication lag to < 1 minute, implement automated failover</li>
+                    <li><strong>Security Hardening:</strong> Deploy immutability monitoring and alert automation</li>
+                    <li><strong>Application Coverage:</strong> Achieve 100% critical application protection</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kasten Discovery Report - kasten-io</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+        .header {
+            background: linear-gradient(135deg, #2c5aa0 0%, #1e3a8a 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            position: relative;
+            overflow: hidden;
+        }
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grain" width="100" height="100" patternUnits="userSpaceOnUse"><circle cx="25" cy="25" r="1" fill="rgba(255,255,255,0.1)"/><circle cx="75" cy="75" r="1" fill="rgba(255,255,255,0.1)"/></pattern></defs><rect width="100" height="100" fill="url(%23grain)"/></svg>');
+            opacity: 0.3;
+        }
+        .header-content {
+            position: relative;
+            z-index: 1;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 2.8em;
+            font-weight: 300;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .version {
+            background: rgba(255,255,255,0.2);
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            display: inline-block;
+            margin-top: 10px;
+        }
+        .header p {
+            margin: 15px 0 0 0;
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+            margin-bottom: 40px;
+        }
+        .summary-card {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            border: 1px solid rgba(0,0,0,0.05);
+        }
+        .summary-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.15);
+        }
+        .summary-card h3 {
+            color: #333;
+            margin: 0 0 15px 0;
+            font-size: 1.1em;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .summary-card .number {
+            font-size: 3em;
+            font-weight: 300;
+            color: #2c5aa0;
+            margin-bottom: 10px;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+        }
+        .summary-card .subtitle {
+            font-size: 0.9em;
+            color: #666;
+            margin: 0;
+        }
+        .section {
+            background: white;
+            margin-bottom: 40px;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(0,0,0,0.05);
+        }
+        .section-header {
+            background: linear-gradient(135deg, #2c5aa0 0%, #1e3a8a 100%);
+            color: white;
+            padding: 25px 30px;
+            font-size: 1.4em;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .tabs {
+            display: flex;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            flex-wrap: wrap;
+        }
+        .tab {
+            padding: 15px 25px;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+        .tab:hover {
+            background: #e9ecef;
+        }
+        .tab.active {
+            background: white;
+            border-bottom-color: #2c5aa0;
+            color: #2c5aa0;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            text-align: left;
+            padding: 18px 25px;
+            border-bottom: 1px solid #eee;
+        }
+        th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+            color: #333;
+            font-size: 0.95em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        tr:hover {
+            background-color: #f8f9fa;
+        }
+        .status {
+            padding: 6px 14px;
+            border-radius: 25px;
+            font-size: 0.85em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .status-running, .status-complete, .status-success, .status-completed, .status-enabled, .status-active, .status-ready, .status-synced, .status-good {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status-failed, .status-error, .status-failure, .status-disabled {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .status-pending, .status-inprogress, .status-governance, .status-partial, .status-warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .status-compliance {
+            background-color: #d1ecf1;
+            color: #0c5460;
+        }
+        .immutability-highlight {
+            background: linear-gradient(135deg, #e8f5e8 0%, #f0fff0 100%);
+            border-left: 4px solid #28a745;
+            padding: 20px;
+            margin: 15px;
+            border-radius: 8px;
+        }
+        .violation-item {
+            color: #dc3545;
+            font-size: 0.9em;
+            margin: 5px 0;
+            padding: 8px 12px;
+            background: #fff5f5;
+            border-radius: 4px;
+            border-left: 3px solid #dc3545;
+        }
+        .no-violations {
+            color: #28a745;
+            font-weight: 600;
+        }
+        .resource-usage {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            padding: 25px;
+            background: #f8f9fa;
+        }
+        .resource-item {
+            text-align: center;
+            padding: 15px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .resource-item h4 {
+            margin: 0 0 10px 0;
+            color: #333;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .resource-value {
+            font-size: 1.5em;
+            font-weight: 600;
+            color: #2c5aa0;
+        }
+        .alert-card {
+            padding: 20px;
+            margin: 15px;
+            border-radius: 10px;
+            border-left: 4px solid;
+        }
+        .alert-critical {
+            background: #fff5f5;
+            border-color: #dc3545;
+            color: #721c24;
+        }
+        .alert-warning {
+            background: #fffbeb;
+            border-color: #ffc107;
+            color: #856404;
+        }
+        .alert-info {
+            background: #e7f3ff;
+            border-color: #0066cc;
+            color: #004085;
+        }
+        .expand-btn {
+            background: none;
+            border: none;
+            color: #2c5aa0;
+            cursor: pointer;
+            padding: 5px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        .expand-btn:hover {
+            background: rgba(44, 90, 160, 0.1);
+        }
+        .expandable {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+        .expandable.expanded {
+            max-height: 200px;
+        }
+        .recommendation-box {
+            background: #e8f4fd;
+            border: 1px solid #bee5eb;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px;
+        }
+        .recommendation-box h4 {
+            color: #0c5460;
+            margin: 0 0 15px 0;
+        }
+        .recommendation-box ul {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .recommendation-box li {
+            margin: 8px 0;
+            color: #0c5460;
+        }
+        .no-data {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+            font-style: italic;
+            font-size: 1.1em;
+        }
+    </style>
+    <script>
+        function switchTab(tabName, element) {
+            const contents = document.querySelectorAll('.tab-content');
+            contents.forEach(content => content.classList.remove('active'));
+            
+            const tabs = document.querySelectorAll('.tab');
+            tabs.forEach(tab => tab.classList.remove('active'));
+            
+            document.getElementById(tabName).classList.add('active');
+            element.classList.add('active');
+        }
+        
+        function toggleExpand(element) {
+            const expandable = element.nextElementSibling;
+            if (expandable.classList.contains('expanded')) {
+                expandable.classList.remove('expanded');
+                element.textContent = '▶';
+            } else {
+                expandable.classList.add('expanded');
+                element.textContent = '▼';
+            }
+        }
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            const firstTab = document.querySelector('.tab');
+            if (firstTab) {
+                firstTab.classList.add('active');
+                document.querySelector('.tab-content').classList.add('active');
+            }
+        });
+    </script>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <h1>🔍 Kasten Discovery Report</h1>
+            <span class="version">Version: 1.0</span>
+            <p>Namespace: <strong>kasten-io</strong> | Generated: 2025-09-06 14:30:15 CET</p>
+        </div>
+    </div>
+
+    <div class="summary-grid">
+        <div class="summary-card">
+            <h3>Backup Policies</h3>
+            <div class="number">9</div>
+            <p class="subtitle">8 active</p>
+        </div>
+        <div class="summary-card">
+            <h3>Immutable Profiles</h3>
+            <div class="number">6</div>
+            <p class="subtitle">4 compliance mode</p>
+        </div>
+        <div class="summary-card">
+            <h3>Disaster Recovery</h3>
+            <div class="number">✅</div>
+            <p class="subtitle">Healthy</p>
+        </div>
+        <div class="summary-card">
+            <h3>Threat Protection</h3>
+            <div class="number">🛡️</div>
+            <p class="subtitle">0 threats detected</p>
+        </div>
+        <div class="summary-card">
+            <h3>Compliance Score</h3>
+            <div class="number">94%</div>
+            <p class="subtitle">3 reports generated</p>
+        </div>
+        <div class="summary-card">
+            <h3>Protected Apps</h3>
+            <div class="number">15</div>
+            <p class="subtitle">6 namespaces</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-header">
+            <span>📊</span>
+            Resource Usage Overview
+        </div>
+        <div class="resource-usage">
+            <div class="resource-item">
+                <h4>CPU Requests</h4>
+                <div class="resource-value">4.2</div>
+            </div>
+            <div class="resource-item">
+                <h4>Memory Requests</h4>
+                <div class="resource-value">12.8 GB</div>
+            </div>
+            <div class="resource-item">
+                <h4>CPU Limits</h4>
+                <div class="resource-value">8.0</div>
+            </div>
+            <div class="resource-item">
+                <h4>Memory Limits</h4>
+                <div class="resource-value">24.0 GB</div>
+            </div>
+            <div class="resource-item">
+                <h4>Storage Usage</h4>
+                <div class="resource-value">4.2 TB</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-header">
+            <span>🚨</span>
+            Security & Compliance Alerts
+        </div>
+        <div class="section-content">
+            <div class="alert-card alert-info">
+                <strong>Threat Protection Active</strong> - Advanced ransomware protection and anomaly detection enabled
+                <br><small>2025-09-06 14:25:00 CET | Status: Monitoring | Performance: Excellent</small>
+            </div>
+            <div class="alert-card alert-warning">
+                <strong>RBAC Over-Privilege Detected</strong> - 2 service accounts have excessive permissions
+                <br><small>2025-09-06 13:15:00 CET | Risk Level: MEDIUM | Review Recommended</small>
+            </div>
+            <div class="alert-card alert-info">
+                <strong>Compliance Score: 94%</strong> - SOX, GDPR, and HIPAA compliance reports generated successfully
+                <br><small>2025-09-06 12:00:00 CET | Status: Compliant | Next Review: Weekly</small>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-header">
+            <span>🏗️</span>
+            Infrastructure Resources
+        </div>
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('pods-tab', this)">Pods</div>
+            <div class="tab" onclick="switchTab('services-tab', this)">Services</div>
+            <div class="tab" onclick="switchTab('storage-tab', this)">Storage</div>
+            <div class="tab" onclick="switchTab('config-tab', this)">Configuration</div>
+        </div>
+        
+        <div id="pods-tab" class="tab-content active">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Status</th>
+                        <th>Ready</th>
+                        <th>Restarts</th>
+                        <th>Node</th>
+                        <th>Age</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>
+                            <strong>catalog-7c9f4b8d9f-xyz12</strong>
+                            <br><small>gcr.io/kasten-images/catalog:6.5.16</small>
+                        </td>
+                        <td><span class="status status-running">RUNNING</span></td>
+                        <td>1/1</td>
+                        <td>0</td>
+                        <td>worker-node-01</td>
+                        <td>12d8h</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <strong>controllermanager-6b8f9c7d5e-abc34</strong>
+                            <br><small>gcr.io/kasten-images/controller:6.5.16</small>
+                        </td>
+                        <td><span class="status status-running">RUNNING</span></td>
+                        <td>1/1</td>
+                        <td>1</td>
+                        <td>worker-node-02</td>
+                        <td>12d8h</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <strong>gateway-8a7c6b5d4e-def56</strong>
+                            <br><small>gcr.io/kasten-images/gateway:6.5.16</small>
+                        </td>
+                        <td><span class="status status-running">RUNNING</span></td>
+                        <td>1/1</td>
+                        <td>0</td>
+                        <td>master-node</td>
+                        <td>12d8h</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <strong>kanister-operator-5f7d9b6c8a-ghi78</strong>
+                            <br><small>gcr.io/kasten-images/kanister-operator:6.5.16</small>
+                        </td>
+                        <td><span class="status status-running">RUNNING</span></td>
+                        <td>1/1</td>
+                        <td>0</td>
+                        <td>worker-node-01</td>
+                        <td>12d8h</td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <strong>executor-worker-1-jkl90</strong>
+                            <br><small>gcr.io/kasten-images/executor:6.5.16</small>
+                        </td>
+                        <td><span class="status status-running">RUNNING</span></td>
+                        <td>1/1</td>
+                        <td>2</td>
+                        <td>worker-node-03</td>
+                        <td>12d8h</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div id="services-tab" class="tab-content">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Cluster IP</th>
+                        <th>External IP</th>
+                        <th>Ports</th>
+                        <th>Age</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>gateway</strong></td>
+                        <td>ClusterIP</td>
+                        <td>10.96.157.42</td>
+                        <td>None</td>
+                        <td>8000/TCP</td>
+                        <td>12d8h</td>
+                    </tr>
+                    <tr>
+                        <td><strong>catalog</strong></td>
+                        <td>ClusterIP</td>
+                        <td>10.96.234.67</td>
+                        <td>None</td>
+                        <td>8080/TCP</td>
+                        <td>12d8h</td>
+                    </tr>
+                    <tr>
+                        <td><strong>controllermanager</strong></td>
+                        <td>ClusterIP</td>
+                        <td>10.96.145.23</td>
+                        <td>None</td>
+                        <td>8080/TCP</td>
+                        <td>12d8h</td>
+                    </tr>
+                    <tr>
+                        <td><strong>kanister-operator</strong></td>
+                        <td>ClusterIP</td>
+                        <td>10.96.198.45</td>
+                        <td>None</td>
+                        <td>8080/TCP</td>
+                        <td>12d8h</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div id="storage-tab" class="tab-content">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Status</th>
+                        <th>Capacity</th>
+                        <th>Storage Class</th>
+                        <th>Age</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>catalog-persistent-storage</strong></td>
+                        <td><span class="status status-success">BOUND</span></td>
+                        <td>20Gi</td>
+                        <td>gp3</td>
+                        <td>12d8h</td>
+                    </tr>
+                    <tr>
+                        <td><strong>logging-persistent-storage</strong></td>
+                        <td><span class="status status-success">BOUND</span></td>
+                        <td>50Gi</td>
+                        <td>gp3</td>
+                        <td>12d8h</td>
+                    </tr>
+                    <tr>
+                        <td><strong>prometheus-storage</strong></td>
+                        <td><span class="status status-success">BOUND</span></td>
+                        <td>100Gi</td>
+                        <td>gp3</td>
+                        <td>12d8h</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div id="config-tab" class="tab-content">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; padding: 25px;">
+                <div style="text-align: center; padding: 20px; background: white; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    <h4>ConfigMaps</h4>
+                    <div style="font-size: 2em; font-weight: 600; color: #2c5aa0;">8</div>
+                </div>
+                <div style="text-align: center; padding: 20px; background: white; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                    <h4>Secrets</h4>
+                    <div style="font-size: 2em; font-weight: 600; color: #2c5aa0;">12</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-header">
+            <span>🛡️</span>
+            Kasten K10 Resources
+        </div>
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('policies-tab', this)">Backup Policies</div>
+            <div class="tab" onclick="switchTab('immutability-tab', this)">Immutability Settings</div>
+            <div class="tab" onclick="switchTab('threat-protection-tab', this)">Threat Protection</div>
+            <div class="tab" onclick="switchTab('compliance-tab', this)">Compliance Reports</div>
+            <div class="tab" onclick="switchTab('lifecycle-tab', this)">Data Lifecycle</div>
+            <div class="tab" onclick="switchTab('dr-tab', this)">Disaster Recovery</div>
+            <div class="tab" onclick="switchTab('applications-tab', this)">Applications</div>
+        </div>
+        
+        <div id="policies-tab" class="tab-content active">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Frequency</th>
+                        <th>Applications</th>
+                        <th>Last Run</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>
+                            <strong>financial-data-policy</strong>
+                            <br><small>By: compliance@company.com</small>
+                        </td>
+                        <td>@every 4h</td>
+                        <td>payment-service, billing-app</td>
+                        <td>
+                            2025-01-20 12:00:00
+                            <br><span class="status status-success">SUCCESS</span>
+                        </td>
+                        <td><span class="status status-enabled">ACTIVE</span></td>
+                        <td>
+                            <small>
+                                <div>backup</div>
+                                <div>export</div>
+                                <div>immutable-store</div>
+                            </small>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <strong>production-databases</strong>
+                            <br><small>By: dba@company.com</small>
+                        </td>
+                        <td>@daily</td>
+                        <td>postgres-prod, mysql-cluster</td>
+                        <td>
+                            2025-01-20 02:00:00
+                            <br><span class="status status-success">SUCCESS</span>
+                        </td>
+                        <td><span class="status status-enabled">ACTIVE</span></td>
+                        <td>
+                            <small>
+                                <div>backup</div>
+                                <div>snapshot</div>
+                                <div>compliance-export</div>
+                            </small>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <strong>critical-apps-dr-policy</strong>
+                            <br><small>By: devops@company.com</small>
+                        </td>
+                        <td>@every 6h</td>
+                        <td>api-gateway, auth-service</td>
+                        <td>
+                            2025-01-20 06:00:00
+                            <br><span class="status status-success">SUCCESS</span>
+                        </td>
+                        <td><span class="status status-enabled">ACTIVE</span></td>
+                        <td>
+                            <small>
+                                <div>backup</div>
+                                <div>dr-replication</div>
+                            </small>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <strong>development-apps</strong>
+                            <br><small>By: devops@company.com</small>
+                        </td>
+                        <td>@weekly</td>
+                        <td>frontend-dev, api-dev</td>
+                        <td>
+                            2025-01-19 22:00:00
+                            <br><span class="status status-success">SUCCESS</span>
+                        </td>
+                        <td><span class="status status-enabled">ACTIVE</span></td>
+                        <td>
+                            <small>
+                                <div>backup</div>
+                                <div>basic-export</div>
+                            </small>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div id="immutability-tab" class="tab-content">
+            <div class="immutability-highlight">
+                <h3>🔒 Immutability Security Overview</h3>
+                <p><strong>4 of 6</strong> storage profiles have immutability protection enabled. <strong>2 profiles</strong> require immediate attention.</p>
+            </div>
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th>Profile Name</th>
+                        <th>Immutability Status</th>
+                        <th>Lock Mode</th>
+                        <th>Retention Period</th>
+                        <th>Compliance Mode</th>
+                        <th>Legal Hold</th>
+                        <th>Last Checked</th>
+                        <th>Violations</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="background: #f8fff8;">
+                        <td><strong>s3-financial-backup</strong></td>
+                        <td><span class="status status-enabled">ENABLED</span></td>
+                        <td>COMPLIANCE</td>
+                        <td>7 years</td>
+                        <td><span class="status status-compliance">COMPLIANCE</span></td>
+                        <td><span class="status status-warning">ACTIVE</span></td>
+                        <td>2025-01-20 14:30:00</td>
+                        <td><span class="no-violations">✅ No violations</span></td>
+                    </tr>
+                    <tr style="background: #f8fff8;">
+                        <td><strong>azure-prod-backup</strong></td>
+                        <td><span class="status status-enabled">ENABLED</span></td>
+                        <td>GOVERNANCE</td>
+                        <td>3 years</td>
+                        <td><span class="status status-governance">GOVERNANCE</span></td>
+                        <td><span class="status status-success">NONE</span></td>
+                        
