@@ -1,263 +1,150 @@
-# 🔍 Kasten Discovery Report v1.0 - Enhanced for Kasten 7.5+ & 8.0+
+<!-- Kasten Discovery — Go implementation -->
+# Kasten Discovery
 
-UNDER MASSIVE DEV
+Read-only discovery and audit tooling for Veeam Kasten K10 on Kubernetes and
+OpenShift. Produces a support-grade inventory — health, RBAC, policies, effective
+RPO, ransomware readiness score, best-practice compliance — as JSON and as a
+single self-contained HTML report.
 
-## Overview
+Written in Go so it ships as **one static binary with no runtime dependencies**:
+the tool runs on a customer's bastion host, where installing an interpreter, or
+even `jq`, is often not an option.
 
-The **Kasten Discovery Report v1.0** is an advanced discovery and audit tool for Kasten K10 deployments. **Specifically optimized for Kasten K10 versions 7.5.1 to 8.0.8** and designed for **OpenShift 4.12, 4.14, 4.16, and 4.18**.
+> **Status: the renderer is complete and tested; the collector is not written yet.**
+>
+> | Command | State |
+> |---|---|
+> | `kdl report` | **Working** — renders all 35 report sections from a discovery JSON |
+> | `kdl validate` | **Working** — type-checks a discovery JSON against the schema |
+> | `kdl scan` | Not implemented — collects from a live cluster |
+> | `kdl diff` | Not implemented — compares two reports |
+>
+> Until `scan` lands, the JSON is produced by the shell implementation at
+> [BertV44/Kasten-Disco-Lite](https://github.com/BertV44/Kasten-Disco-Lite),
+> which is the tool currently in use with customers. This repository is where the
+> Go rewrite happens; the two share the report JSON as their contract.
 
-## ✨ Main Features
+## Install
 
-### 🆕 **New features in Kasten 7.5+ and 8.0+**
-- **🛡️ Threat Protection**: Ransomware detection, ML anomalies, integrity verification  
-- **📋 Compliance Reports**: SOX, GDPR, HIPAA with automated scoring  
-- **🔄 Lifecycle Management**: Retention, archiving, smart deletion  
-- **🔐 Advanced RBAC Analysis**: Privilege audit, over-provisioning detection  
-- **🔒 Reinforced Immutability**: At-rest encryption, integrity verification  
+Download a binary from [Releases](https://github.com/BertV44/Kasten-Discovery/releases)
+and make it executable:
 
-### 🔒 **Advanced Security Analysis**
-- **Extended immutability audit**: Support for new 7.5+ and 8.0+ APIs  
-- **Regulatory compliance**: Quantified scoring with recommendations  
-- **Threat detection**: Real-time ransomware protection  
-- **Risk assessment**: Quantified security metrics  
-- **Full audit trail**: Traceability for legal compliance  
-
-### 🏭 **Native OpenShift Support**
-- **Automatic detection**: OpenShift vs Kubernetes  
-- **Specialized resources**: Routes, SCCs, storage classes  
-- **Security integration**: Privilege analysis, constraints  
-- **Optimized performance**: Native OpenShift APIs  
-
-## 🚀 Quick Installation
-
-### **Strict Prerequisites**
 ```bash
-# REQUIRED Kasten versions
-Kasten K10 7.5.1+ ✅ (absolute minimum)
-Kasten K10 8.0.8  ✅ (recommended version)
-
-# Unsupported versions
-Kasten K10 < 7.5.1 ❌ (missing APIs)
-
-# Version check
-oc get pods -n kasten-io -l app.kubernetes.io/name=k10 -o jsonpath='{.items[0].spec.containers[0].image}'
+chmod +x kdl-linux-amd64 && sudo mv kdl-linux-amd64 /usr/local/bin/kdl
 ```
 
-### **Setup for new versions**
+Verify the checksum published alongside it:
+
 ```bash
-# 1. Project with extended support
-mkdir kasten-discovery-enhanced && cd kasten-discovery-enhanced
-
-# 2. Initialization with new dependencies
-go mod init kasten-discovery
-go get k8s.io/client-go@v0.28.4
-go get k8s.io/apimachinery@v0.28.4
-go get k8s.io/api@v0.28.4
-go get k8s.io/api/rbac/v1  # For advanced RBAC
-
-# 3. Extended RBAC required
-oc apply -f - <<EOF
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: kasten-discovery-enhanced
-rules:
-# New Kasten 7.5+ APIs
-- apiGroups: ["compliance.kio.kasten.io"]
-  resources: ["compliancereports"]
-  verbs: ["get", "list"]
-- apiGroups: ["lifecycle.kio.kasten.io"]
-  resources: ["datalifecyclepolicies"]
-  verbs: ["get", "list"]
-# New Kasten 8.0+ APIs
-- apiGroups: ["security.kio.kasten.io"]
-  resources: ["threatprotections"]
-  verbs: ["get", "list"]
-# RBAC analysis
-- apiGroups: ["rbac.authorization.k8s.io"]
-  resources: ["roles", "clusterroles", "rolebindings", "clusterrolebindings"]
-  verbs: ["get", "list"]
-EOF
-
-# 4. Run with version validation
-go run main.go kasten-io --export-json
+sha256sum -c checksums.txt --ignore-missing
 ```
 
-## 📊 Enhanced Output Examples
+Or build from source (Go 1.23 or later, no network needed — there are no
+dependencies yet):
 
-### **Console with new features**
-```
-🔍 Kasten Discovery Report v1.0
-   Supported Kasten versions: 7.5.1 - 8.0.8
-
-🔍 Gathering Kasten K10 information...
-   ✅ Kasten version 8.0.8 detected (features: enhanced-immutability, compliance-reporting, data-lifecycle-management, threat-protection, ransomware-protection, anomaly-detection, integrity-verification, advanced-rbac)
-   
-📊 Discovery Summary:
-   📋 Kasten Version: 8.0.8 (8.0.8)
-   🆕 Enhanced Features: threat-protection, compliance-reporting, advanced-rbac
-   🛡️ Threat Protection: Enabled (0 threats detected)
-   📋 Compliance Reports: 3 (avg score: 94%)
-   🔄 Data Lifecycle Policies: 2 (1.2TB archived)
-   🔐 RBAC Analysis: 2 security issues detected
-```
-
-### **New available metrics**
-```json
-{
-  "kastenVersionParsed": {
-    "major": 8, "minor": 0, "patch": 8,
-    "supportedFeatures": ["threat-protection", "compliance-reporting", "advanced-rbac"]
-  },
-  "threatProtection": {
-    "enabled": true,
-    "ransomwareProtection": true,
-    "threatsDetected": 0,
-    "lastScan": "2025-09-06 14:30:00"
-  },
-  "complianceReports": [
-    {
-      "name": "sox-compliance",
-      "complianceScore": 98,
-      "violations": ["minor-retention-issue"]
-    }
-  ]
-}
-```
-
----
-
-## ✨ Main Features (Extended)
-
-### 🔒 **Advanced Security Analysis**
-- **Immutability Audit**: S3 Object Lock, Azure Blob, VBR, WORM  
-- **Regulatory compliance**: Governance vs Compliance modes  
-- **Legal holds**: Tracking regulatory holds  
-- **Violation analysis**: Identification of security gaps  
-
-### 🏭 **Native OpenShift Support**
-- **Automatic detection**: OpenShift vs vanilla Kubernetes  
-- **OpenShift Routes**: Route collection with TLS analysis  
-- **Security Context Constraints**: Audit of Kasten SCCs  
-- **Storage classes**: Support for ODF, AWS, Azure, GCP  
-
-### 🔄 **Disaster Recovery**
-- **Cross-cluster status**: Replication health  
-- **RTO/RPO metrics**: Replication lag and failover readiness  
-- **DR tests**: History and recommendations  
-
----
-
-## 📦 Deliverables
-
-### **1. Main script**: `main.go`
 ```bash
-# Full source code with all features
-# Size: ~2000 lines
-# Functions: 50+ complete functions
+git clone https://github.com/BertV44/Kasten-Discovery.git
+cd Kasten-Discovery && go build -o kdl ./cmd/kdl
 ```
 
-### **2. User Guide**: Complete guide with examples
+## Use
+
 ```bash
-# Installation, configuration, usage
-# OpenShift troubleshooting
-# Advanced use cases
+# Render the HTML report from a discovery JSON
+kdl report -in discovery.json -out report.html
+
+# Type-check a report and summarise what it contains
+kdl validate -in discovery.json
 ```
 
-### **3. Example Report**: Interactive HTML dashboard
+`report` writes to stdout when `-out` is omitted. `validate` is strict by
+default: a key the schema does not model is an error, which is what makes schema
+drift visible the first time a newer KDL produces a report.
+
+The HTML is a single self-contained file — CSS and JS are embedded — because the
+report gets emailed and opened from a laptop with no network.
+
+## How it is built
+
+```
+cmd/kdl/              CLI: one binary, one subcommand per job
+internal/schema/      the report JSON, typed — the contract between all parts
+  report.go           generated from a real cluster report, then hand-refined
+  selector.go         hand-written: polymorphic policy selector + Kasten globs
+  nodelimit.go        node limits are a number OR "unlimited"/"none"
+  schema_notes.md     what is verified and what is not — read before trusting a type
+  genschema.py        the generator that produced report.go
+internal/report/      HTML renderer, all 35 sections
+  section.go          the three recurring section shapes, modelled once
+  sections.go         every section expressed as data
+  bestpractices.go    the 16 best-practice checks as a table
+  templates/          page.tmpl plus one block per irregular section
+  assets/             style.css and app.js, embedded at build time
+internal/scan/        collector (not implemented)
+internal/diff/        report comparison (not implemented)
+_legacy/              the v1.0 sketch this rewrite supersedes, kept for reference
+```
+
+Two design decisions carry most of the weight.
+
+**The report is data, not code.** Its 35 sections are three recurring shapes — a
+card of label/value rows, a grid of figures, a table — so the shapes are modelled
+once and each section is a value in a slice. The 16 best-practice checks are
+likewise one table with a severity and an extractor per check, not sixteen blocks.
+Adding a section or a check is an entry, and it cannot be counted differently from
+its neighbours by accident.
+
+**The schema is derived, not transcribed.** `report.go` was generated from a real
+anonymised cluster report and then refined by hand, and every key path the shell
+collector emits is checked against it mechanically. `internal/schema/schema_notes.md`
+records exactly which types are confirmed by a real report and which are inferred —
+read it before trusting a field.
+
+## Kasten 9.0
+
+- A policy can carry **two export actions** (additional export). Nothing here ever
+  reads "the" export of a policy; the list is always the unit.
+- VM selectors come in three mutually exclusive forms: `appNamespace`,
+  `virtualMachineRef` (8.5+, values are `namespace/vmName`), and
+  `virtualMachineNamespace` (9.0+). On that third form `matchLabels` filters
+  **VMs, not namespaces** — conflating the two is the failure this code is
+  structured to prevent.
+- `hourly` is a valid retention tier and is rendered.
+- VBR block-mode export profiles and hardened-repository immutability are surfaced.
+
+## Test fixtures
+
+Discovery reports are derived from customer clusters and this repository is
+public, so **no report is committed here**. Drop an anonymised one at
+`testdata/report.json` and the fixture-backed tests run against it; without it
+they skip, so a fresh clone stays green.
+
 ```bash
-# Responsive web interface
-# Realistic demo data
-# Mobile compatible
+go test ./...                                    # skips fixture-backed tests
+KDL_FIXTURE=/path/to/report.json go test ./...   # runs them against any report
 ```
 
----
+Pointing the tests at a report from a **newer** KDL is the drift detector: the
+strict decode fails and names the key that is missing from the schema.
 
-## 🚨 Troubleshooting
+## Contributing
 
-### **Common Errors**
-
-#### **Permission denied**
 ```bash
-# Solution: Verify RBAC
-oc auth can-i get pods -n kasten-io
-oc adm policy add-cluster-role-to-user cluster-reader $(oc whoami)
+go build ./... && go vet ./... && go test ./...
+gofmt -l . | grep -v '^_legacy/'
 ```
 
-#### **CRDs not found**
-```bash
-# Solution: Verify Kasten installation
-oc get crd | grep kasten
-oc get operators -n kasten-io
-```
+CI runs exactly that on every push, then cross-compiles the binaries.
 
-#### **Connection timeout**
-```bash
-# Solution: Increase timeout
-export KASTEN_TIMEOUT=120
-```
+Conventional commits (`feat:`, `fix:`, `docs:`, `test:`). Releases are cut by
+pushing a tag: `git tag v0.1.0 && git push origin v0.1.0` builds the binaries,
+generates checksums and publishes a GitHub Release.
 
-#### **Proxy/Network**
-```bash
-# Solution: Configure proxy
-export HTTP_PROXY=http://proxy:8080
-export NO_PROXY=.cluster.local,.svc,localhost
-```
+## Support
 
----
+Bertrand Castagnet — EMEA TAM, Veeam.
+Issues and feature requests via GitHub Issues.
 
-## 📈 Use Cases
-
-### **1. Security Audit**
-```bash
-# Immutability report
-jq '.ImmutabilityConfig[] | select(.ImmutabilityStatus!="ENABLED")' data.json
-
-# Compliance analysis
-jq '.ClusterSummary.ImmutableProfiles / .ClusterSummary.TotalProfiles * 100' data.json
-```
-
-### **2. Automated Monitoring**
-```bash
-#!/bin/bash
-# Daily monitoring script
-./kasten-discovery kasten-io --export-json
-FAILED_ACTIONS=$(jq '.ClusterSummary.FailedActions' kasten-discovery-data-kasten-io.json)
-if [ "$FAILED_ACTIONS" -gt 0 ]; then
-    echo "ALERT: $FAILED_ACTIONS failed actions detected"
-    # Send notification
-fi
-```
-
-### **3. Executive Report**
-```bash
-# Generate PDF report
-wkhtmltopdf kasten-discovery-report-kasten-io.html executive-report.pdf
-
-# Key metrics for dashboard
-jq '{
-  platform: .ClusterInfo.Platform,
-  kasten_version: .KastenVersion,
-  dr_enabled: .KastenDREnabled,
-  immutability_coverage: (.ClusterSummary.ImmutableProfiles / .ClusterSummary.TotalProfiles * 100),
-  backup_success_rate: (((.ClusterSummary.RecentActions - .ClusterSummary.FailedActions) / .ClusterSummary.RecentActions) * 100)
-}' kasten-discovery-data-kasten-io.json
-```
-
----
-
-## 📞 Support
-Bertrand Castagnet, EMEA TAM
-
-### **Documentation**
-WIP
-
-### **Community**
-- GitHub Issues for bugs and feature requests   
-- Official Kasten K10 documentation
-- Official Redhat Openshift documentation
-
----
-
-**Developed by the EMEA TAM team**  
-Version 1.0 | Compatible with OpenShift 4.12-4.18 | September 2025
+The tool is **read-only**: it never mutates the cluster. That is a promise made to
+customers, and the collector will enforce it structurally rather than by
+convention when it lands.

@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  # Lets the deliverables be built on demand, without cutting a release.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.23'
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # _legacy/ holds the superseded v1.0 sketch, which is not valid Go. The go
+      # tool skips underscore-prefixed directories on its own; gofmt does not, so
+      # it has to be excluded explicitly here.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l . | grep -v '^_legacy/' || true)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      # Fixture-backed tests skip when testdata/report.json is absent, which it is
+      # here: discovery reports are customer-derived and never committed. -count=1
+      # disables the test cache so a green run always means a real run.
+      - name: Test
+        run: go test -count=1 ./...
+
+      # A skip is legitimate, but it should be visible rather than silent: a reader
+      # of the CI log needs to know the fixture-backed tests did not actually run.
+      - name: Report skipped tests
+        if: always()
+        run: |
+          go test -count=1 -v ./... 2>&1 | grep -E '^\s*--- SKIP' || \
+            echo "No skipped tests."
+
+  build:
+    name: Build deliverables
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # Static by construction: CGO off, and the binary embeds its own CSS, JS and
+      # templates, so a single file is the whole deliverable. That is the point of
+      # choosing Go -- it has to run on a customer bastion host with nothing
+      # installed on it.
+      - name: Build
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          version="${GITHUB_REF_NAME}"
+          case "$GITHUB_REF" in
+            refs/tags/*) ;;
+            *) version="${GITHUB_REF_NAME}-$(git rev-parse --short HEAD)" ;;
+          esac
+          out="kdl-${GOOS}-${GOARCH}"
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${version}" \
+            -o "dist/${out}" ./cmd/kdl
+          ls -l "dist/${out}"
+          "dist/${out}" version 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kdl-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/kdl-${{ matrix.goos }}-${{ matrix.goarch }}
+          if-no-files-found: error
+
+  # A binary a customer runs on their cluster host needs a checksum they can
+  # verify, so it is produced by CI rather than by hand.
+  checksums:
+    name: Checksums
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate
+        run: |
+          cd dist
+          sha256sum kdl-* | tee checksums.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: dist/checksums.txt
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: checksums
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            Static binaries, no runtime dependencies. Verify before running:
+
+            ```
+            sha256sum -c checksums.txt --ignore-missing
+            ```

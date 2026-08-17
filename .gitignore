@@ -1,0 +1,16 @@
+# Compiled prototype binary (`go build ./cmd/kdl` drops it here)
+/kdl
+/cmd/kdl/kdl
+
+# Go test artefacts
+*.test
+*.out
+
+# Discovery reports are customer-derived; keep them out of a public repo.
+/testdata/*.json
+/*.json
+/*.html
+
+# CI build output
+/dist/
+/kdl
