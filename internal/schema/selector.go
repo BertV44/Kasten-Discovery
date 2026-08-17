@@ -104,7 +104,38 @@ func (s *PolicySelector) UnmarshalJSON(data []byte) error {
 	s.MatchExpressions = obj.MatchExpressions
 	s.MatchLabels = obj.MatchLabels
 	s.MatchNames = obj.MatchNames
+
+	// A selector that states no dimension AT ALL selects everything, the same as
+	// a null selector or the string "all": `{}`, or every key present but null.
+	// That is KDL.sh's CATCHALL_POLICIES test (`keys | length == 0`, or all
+	// three null), and it is the one that drives unprotectedNamespaces.
+	//
+	// The test is deliberately on the RAW keys, not on the decoded lengths. A
+	// present-but-empty dimension -- `{"matchNames": []}` -- states a dimension
+	// and matches nothing, which the shell resolves to an EMPTY policy that
+	// protects nothing. Treating it as a catch-all instead would claim a policy
+	// selecting nothing protects everything, and unprotectedNamespaces would go
+	// to zero. For a backup-posture tool, over-claiming protection is the worse
+	// direction of the two.
+	if statesNoDimension(data) {
+		s.All = true
+	}
 	return nil
+}
+
+// statesNoDimension reports whether the selector object names no selection
+// dimension at all: no keys, or every key explicitly null.
+func statesNoDimension(data []byte) bool {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	for _, v := range raw {
+		if strings.TrimSpace(string(v)) != "null" {
+			return false
+		}
+	}
+	return true
 }
 
 // MarshalJSON replays the original bytes when the selector came from a report,

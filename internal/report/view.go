@@ -20,6 +20,11 @@ type Page struct {
 
 	Grade      string
 	GradeClass string
+	// Graded is false when the report carries no readiness score at all -- a
+	// collector that does not compute it, or a KDL older than 2.0. Rendering
+	// "Grade ." with a score of 0/0 dresses an absent verdict up as the worst
+	// possible one.
+	Graded     bool
 	Summary    CheckSummary
 	Score      int
 	MaxScore   int
@@ -204,6 +209,7 @@ func BuildPage(r *schema.Report, opts Options) *Page {
 
 		Grade:      ransom.Grade,
 		GradeClass: ransom.GradeClass,
+		Graded:     r.RansomwareReadiness.Grade != "",
 		Summary:    sum,
 		Score:      ransom.Score,
 		MaxScore:   ransom.MaxScore,
@@ -301,21 +307,9 @@ func buildPolicies(r *schema.Report) PolicyView {
 	}
 
 	for _, p := range r.Policies.Items {
-		// A policy with no frequency of its own is scheduled by its preset, not
-		// manual. Calling it manual tells the reader nobody is backing that
-		// workload up on a schedule, which is the opposite of the truth.
-		frequency := deref(p.Frequency, "")
-		if frequency == "" {
-			if preset := deref(p.PresetRef, ""); preset != "" {
-				frequency = "via preset " + preset
-			} else {
-				frequency = "manual"
-			}
-		}
-
 		row := PolicyRow{
 			Name:      p.Name,
-			Frequency: frequency,
+			Frequency: frequencyLabel(deref(p.Frequency, ""), deref(p.PresetRef, "")),
 			Scope:     scopeLabel(p.EffectiveScope()),
 			Selector:  selectorLabel(p.Selector),
 			Actions:   strings.Join(p.Actions, ", "),
@@ -383,8 +377,41 @@ func buildProfiles(r *schema.Report) ProfileView {
 	return v
 }
 
+// frequencyLabel names how a policy is scheduled.
+//
+// KDL emits `spec.frequency // null`, so an absent frequency means the policy
+// declares none of its own -- which is how a preset-scheduled policy looks. A
+// genuinely on-demand policy is emitted explicitly as "@onDemand" and never
+// reaches the fallback. Labelling the absent case "manual" therefore asserts
+// that nothing backs the workload up on a schedule, the opposite of the truth.
+//
+// The policy table and the effective-RPO table list the same policies and must
+// agree, so the rule lives here once. It previously did not: each section
+// carried its own copy, the RPO copy never learnt about presets, and the two
+// tables contradicted each other on every preset-scheduled policy.
+func frequencyLabel(frequency, presetRef string) string {
+	switch {
+	case frequency != "":
+		return frequency
+	case presetRef != "":
+		return "via preset " + presetRef
+	default:
+		return "manual"
+	}
+}
+
 func buildRPO(r *schema.Report) RPOView {
 	rpo := r.PolicyRunStats.EffectiveRPO
+
+	// The RPO items carry no preset reference of their own; it lives on the
+	// policy. Without this lookup a preset-scheduled policy reads as "manual".
+	presets := make(map[string]string, len(r.Policies.Items))
+	for _, p := range r.Policies.Items {
+		if ref := deref(p.PresetRef, ""); ref != "" {
+			presets[p.Name] = ref
+		}
+	}
+
 	v := RPOView{
 		Total:          rpo.Summary.TotalPolicies,
 		WithFrequency:  rpo.Summary.WithKnownFrequency,
@@ -396,10 +423,8 @@ func buildRPO(r *schema.Report) RPOView {
 	}
 	for _, it := range rpo.Items {
 		row := RPORow{
-			Name: it.Name,
-			// No declared frequency means the policy runs on demand, which the shell
-			// renderer states as "manual" rather than as an unknown.
-			Declared:    deref(it.FrequencyDeclared, "manual"),
+			Name:        it.Name,
+			Declared:    frequencyLabel(deref(it.FrequencyDeclared, ""), presets[it.Name]),
 			Theoretical: naValue,
 			Samples:     it.Samples,
 			Median:      naValue,

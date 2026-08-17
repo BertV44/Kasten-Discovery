@@ -56,3 +56,15 @@ func Decode(r io.Reader, strict bool) (*Report, error) {
 func (r *Report) HasV9Sections() bool {
 	return r.KastenCompatibility != nil
 }
+
+// StatusNotAssessed is KDL's word for a value that could not be read: RBAC
+// refused it, or the collector does not gather it. It is the emitter's own
+// vocabulary, not one invented here -- KDL.sh writes it rather than reporting a
+// zero for a node listing it was denied.
+//
+// It lives in the schema because both sides of the contract need it: a
+// collector emits it deliberately instead of leaving a field empty, and the
+// renderer reads it to show a check as neither passing nor failing. An empty
+// field would instead be read as an unrecognised status, which fails the check
+// and invents an alarm out of data nobody gathered.
+const StatusNotAssessed = "NOT_ASSESSED"
