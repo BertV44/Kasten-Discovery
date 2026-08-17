@@ -177,13 +177,39 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # Pre-release is derived from the version, not hardcoded: under semver a
+      # 0.y.z release promises nothing about stability, so every v0.* tag is
+      # flagged and v1.0.0 onwards is not. Hardcoding the flag would either mark
+      # a future stable release as a preview or, worse, silently stop flagging
+      # once someone flipped it.
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           generate_release_notes: true
+          prerelease: ${{ startsWith(github.ref_name, 'v0.') }}
           body: |
             Static binaries, no runtime dependencies. Verify before running:
 
             ```
             sha256sum -c checksums.txt --ignore-missing
             ```
+
+            | Command | State |
+            |---|---|
+            | `kdl report` | renders all 35 sections from a discovery JSON |
+            | `kdl validate` | type-checks a discovery JSON against the schema |
+            | `kdl diff` | compares two reports; exit code = regression count |
+            | `kdl scan` | **partial** — see below |
+
+            **`kdl scan` has never been run against a live Kasten cluster.** It
+            collects the inventory and computes namespace coverage and policy
+            analysis; the verdict sections (ransomware readiness, the 16
+            best-practice checks, effective RPO, retention, K10 configuration)
+            are not computed, and it prints that list on every run. Its CRD field
+            paths are derived from `KDL.sh`'s jq expressions rather than verified
+            against a cluster.
+
+            For a complete report, [KDL.sh](https://github.com/BertV44/Kasten-Disco-Lite)
+            remains the tool to use. `kdl report` and `kdl diff` consume its JSON.
+
+            The tool never writes to a cluster.
