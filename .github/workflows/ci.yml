@@ -27,11 +27,14 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       # _legacy/ holds the superseded v1.0 sketch, which is not valid Go. The go
-      # tool skips underscore-prefixed directories on its own; gofmt does not, so
-      # it has to be excluded explicitly here.
+      # tool skips underscore-prefixed directories on its own; gofmt does not.
+      # Filtering its output is not enough -- gofmt still writes a parse error to
+      # stderr, which GitHub turns into a red annotation on an otherwise green run,
+      # and a permanent red annotation teaches everyone to ignore annotations. So
+      # point gofmt at the real source directories instead of the whole tree.
       - name: gofmt
         run: |
-          unformatted=$(gofmt -l . | grep -v '^_legacy/' || true)
+          unformatted=$(gofmt -l ./cmd ./internal)
           if [ -n "$unformatted" ]; then
             echo "These files need gofmt:"
             echo "$unformatted"

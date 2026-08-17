@@ -131,7 +131,7 @@ strict decode fails and names the key that is missing from the schema.
 
 ```bash
 go build ./... && go vet ./... && go test ./...
-gofmt -l . | grep -v '^_legacy/'
+gofmt -l ./cmd ./internal
 ```
 
 CI runs exactly that on every push, then cross-compiles the binaries.
