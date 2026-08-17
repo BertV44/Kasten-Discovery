@@ -84,6 +84,8 @@ h3 { font-size:1rem; margin:1.5rem 0 0.5rem; color:var(--text-muted); }
 .grade-a, .grade-b { background:var(--ok-bg); color:var(--ok-fg); border:2px solid var(--ok-bd); }
 .grade-c { background:var(--warn-bg); color:var(--warn-fg); border:2px solid var(--warn-bd); }
 .grade-d, .grade-f { background:var(--crit-bg); color:var(--crit-fg); border:2px solid var(--crit-bd); }
+/* No score in the report: neutral, so an absent verdict never reads as a bad one. */
+.grade-none { background:var(--info-bg); color:var(--info-fg); border:2px dashed var(--info-bd); }
 
 /* ===== pillar rows ===== */
 .pillar-row { display:grid; grid-template-columns:90px 1fr 90px 1fr; gap:0.75rem; align-items:center; padding:0.5rem 0.75rem; border-bottom:1px solid var(--border); }

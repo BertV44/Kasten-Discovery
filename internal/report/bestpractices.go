@@ -56,6 +56,10 @@ func (s Severity) failBadge() Badge {
 
 var passBadge = Badge{Class: "ok", Text: "✓"}
 
+// notAssessedBadge is deliberately neither the green tick nor a severity
+// failure: a check nobody could evaluate must not look like either verdict.
+var notAssessedBadge = Badge{Class: "info", Text: "ℹ not assessed"}
+
 // checkDef declares one best-practice check: its identity, how much a failure
 // matters, where its status value comes from, and what context to show beside it.
 //
@@ -202,6 +206,12 @@ type Check struct {
 	// Unknown marks a status value absent from statusTable, i.e. KDL emitted
 	// something this renderer has never seen.
 	Unknown bool
+	// NotAssessed marks a check whose input was never collected -- a denied
+	// read, or a collector that does not compute it. Such a check is neither
+	// passing nor failing, and must be counted as neither: rendering it as a
+	// failure invents an alarm out of data nobody gathered, and rendering it as
+	// a pass claims a posture nobody verified.
+	NotAssessed bool
 }
 
 // CheckSummary counts checks the way the report's verdict banner does.
@@ -218,6 +228,10 @@ type CheckSummary struct {
 	// Unknown counts status values this renderer does not model. Always zero on a
 	// report from a KDL this build knows about.
 	Unknown int
+	// NotAssessed counts checks whose input was never collected. It is
+	// deliberately not folded into Passing: "we did not look" and "we looked and
+	// it was fine" are the two statements this report exists to keep apart.
+	NotAssessed int
 }
 
 // EvaluateChecks runs the check table against a report.
@@ -233,18 +247,27 @@ func EvaluateChecks(r *schema.Report) ([]Check, CheckSummary) {
 			continue
 		}
 		detail, polarity, known := StatusBadge(value)
-		failing := polarity != PolarityOK
+		// NOT_ASSESSED is the emitter's word for "the read this check needs was
+		// refused, or never made". It is neither a pass nor a failure, so it
+		// short-circuits the polarity verdict entirely -- otherwise a critical
+		// check reads "✗ CRITICAL" purely because nobody looked.
+		notAssessed := value == schema.StatusNotAssessed
+		failing := !notAssessed && polarity != PolarityOK
 
 		c := Check{
-			Label:    def.Label,
-			Severity: def.Severity,
-			Detail:   detail,
-			Failing:  failing,
-			Unknown:  !known,
+			Label:       def.Label,
+			Severity:    def.Severity,
+			Detail:      detail,
+			Failing:     failing,
+			Unknown:     !known,
+			NotAssessed: notAssessed,
 		}
-		if failing {
+		switch {
+		case notAssessed:
+			c.Status = notAssessedBadge
+		case failing:
 			c.Status = def.Severity.failBadge()
-		} else {
+		default:
 			c.Status = passBadge
 		}
 		if def.context != nil {
@@ -257,6 +280,8 @@ func EvaluateChecks(r *schema.Report) ([]Check, CheckSummary) {
 			sum.Unknown++
 		}
 		switch {
+		case notAssessed:
+			sum.NotAssessed++
 		case failing && def.Severity == SevCritical:
 			sum.Critical++
 		case failing && def.Severity == SevWarning:

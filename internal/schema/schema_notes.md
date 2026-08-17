@@ -139,3 +139,25 @@ instead of ignoring it. A selector dimension this build does not know about woul
 otherwise yield a confidently wrong protection verdict — the worst failure mode
 for a discovery tool. Failing loudly is the intended behaviour; revisit only with
 a plan for how consumers surface "scope unknown".
+
+## Added by the Go collector
+
+`unpopulatedSections` (`Report.UnpopulatedSections`, with `Report.NotCollected`)
+is **not** a KDL.sh field. It was added when `kdl scan` landed as a partial
+collector, and it is the only field in this schema that no shell report carries.
+
+It exists because "never computed" and "computed and found nothing" are
+indistinguishable from a section's own contents, and the difference is not
+cosmetic: a report missing the licence block diffs as *"3 licence(s) removed"*
+and one missing the DR block as *"disaster recovery disabled"*. Both are among
+the most alarming things these tools can say, and both were false.
+
+`omitempty`, so a KDL.sh report is unaffected and keeps being compared in full.
+Absent means "the producer filled everything it knows about", which is the right
+default: skipping every empty section would hide a real licence removal.
+
+`StatusNotAssessed` in `schema.go` is the opposite case — it *is* KDL's own
+vocabulary, hoisted into the schema so a collector can emit it deliberately
+rather than leaving a best-practice field empty. An empty field is read by the
+renderer as an unrecognised status, which fails the check: that is how a
+Go-collected report once showed "2 Critical" for two checks nobody had looked at.

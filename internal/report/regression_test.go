@@ -29,7 +29,27 @@ const vmRefReport = `{
       }
     ]
   },
-  "profiles": {"count": 0, "immutableCount": 0, "items": []}
+  "profiles": {"count": 0, "immutableCount": 0, "items": []},
+  "policyRunStats": {
+    "lastRuns": [],
+    "averageDuration": {"seconds": 0, "min": 0, "max": 0, "sampleCount": 0},
+    "effectiveRpo": {
+      "summary": {
+        "totalPolicies": 2, "withKnownFrequency": 1, "withEnoughSamples": 0,
+        "inDrift": 0, "driftThreshold": "1.5", "window": "14d", "note": ""
+      },
+      "items": [
+        {
+          "name": "one-vm", "frequencyDeclared": "@daily", "frequencyTheoreticalSeconds": 86400,
+          "samples": 0, "median": null, "max": null, "drift": null
+        },
+        {
+          "name": "by-preset", "frequencyDeclared": null, "frequencyTheoreticalSeconds": null,
+          "samples": 0, "median": null, "max": null, "drift": null
+        }
+      ]
+    }
+  }
 }`
 
 // TestVMRefIsNotReducedToItsNamespace: the selector cell used to be built from
@@ -56,22 +76,39 @@ func TestVMRefIsNotReducedToItsNamespace(t *testing.T) {
 // TestPresetScheduledPolicyIsNotCalledManual: a policy with no frequency of its
 // own is scheduled by its preset. Labelling it "manual" says nothing is backing
 // that workload up on a schedule, which is the opposite of the truth.
+//
+// Every section that names a policy's schedule is checked, not just the policy
+// table. The first version of this test only walked page.Policies.Rows, so the
+// identical bug in the effective-RPO table -- which builds its own label from
+// its own field -- went on shipping with the test green.
 func TestPresetScheduledPolicyIsNotCalledManual(t *testing.T) {
-	page := BuildPage(decodeReport(t, vmRefReport), Options{Now: fixedNow})
+	r := decodeReport(t, vmRefReport)
+	page := BuildPage(r, Options{Now: fixedNow})
 
+	labels := map[string]string{}
 	for _, row := range page.Policies.Rows {
-		if row.Name != "by-preset" {
-			continue
+		if row.Name == "by-preset" {
+			labels["policy table"] = row.Frequency
 		}
-		if strings.Contains(row.Frequency, "manual") {
-			t.Errorf("frequency = %q, want the preset to be named", row.Frequency)
-		}
-		if !strings.Contains(row.Frequency, "kubecon-daily") {
-			t.Errorf("frequency = %q, want it to mention preset kubecon-daily", row.Frequency)
-		}
-		return
 	}
-	t.Fatal("policy by-preset missing from the view")
+	for _, row := range buildRPO(r).Rows {
+		if row.Name == "by-preset" {
+			labels["effective-RPO table"] = row.Declared
+		}
+	}
+
+	for _, section := range []string{"policy table", "effective-RPO table"} {
+		got, ok := labels[section]
+		if !ok {
+			t.Fatalf("policy by-preset missing from the %s", section)
+		}
+		if strings.Contains(got, "manual") {
+			t.Errorf("%s: frequency = %q, want the preset to be named", section, got)
+		}
+		if !strings.Contains(got, "kubecon-daily") {
+			t.Errorf("%s: frequency = %q, want it to mention preset kubecon-daily", section, got)
+		}
+	}
 }
 
 // TestWildcardClusterRoleUsesOr: the wildcard check required all verbs AND all
@@ -317,5 +354,99 @@ func TestConsumptionStatusVocabulary(t *testing.T) {
 		if _, _, known := StatusBadge(invented); known {
 			t.Errorf("%s is in statusTable but KDL.sh never emits it", invented)
 		}
+	}
+}
+
+// TestUnassessedCheckIsNeitherPassingNorFailing: a check whose input was never
+// collected must not be counted as a failure -- that invents an alarm out of
+// data nobody gathered -- and must not be counted as passing either, which
+// would claim a posture nobody verified. It gets its own bucket.
+func TestUnassessedCheckIsNeitherPassingNorFailing(t *testing.T) {
+	// Every field is set, so the counts below are unambiguous: the two critical
+	// checks are unassessed, one warning genuinely fails, and the rest pass.
+	const doc = `{
+	  "kdlVersion": "2.2.0-go",
+	  "bestPractices": {
+	    "disasterRecovery": "NOT_ASSESSED",
+	    "authentication": "NOT_ASSESSED",
+	    "immutability": "NOT_CONFIGURED",
+	    "encryption": "CONFIGURED",
+	    "namespaceProtection": "COMPLETE",
+	    "vmProtection": "COMPLETE",
+	    "resourceLimits": "OK",
+	    "policyPresets": "IN_USE",
+	    "monitoring": "ENABLED",
+	    "auditLogging": "ENABLED",
+	    "snapshotRetentionHigh": "OK",
+	    "snapshotRetentionZero": "OK",
+	    "exportRetentionExplicit": "OK",
+	    "clusterScopedResources": "CONFIGURED",
+	    "policiesWithoutExport": "OK"
+	  }
+	}`
+	_, sum := EvaluateChecks(decodeReport(t, doc))
+
+	if sum.Critical != 0 {
+		t.Errorf("critical = %d, want 0: the two critical checks were never assessed, not failing", sum.Critical)
+	}
+	if sum.NotAssessed != 2 {
+		t.Errorf("notAssessed = %d, want 2", sum.NotAssessed)
+	}
+	if sum.Warnings != 1 {
+		t.Errorf("warnings = %d, want 1: a genuinely failing check must still be caught", sum.Warnings)
+	}
+	// 15 checks total: 2 not assessed, 1 failing warning, 12 passing. The
+	// unassessed pair must land in neither of the other two buckets.
+	if sum.Passing != 12 {
+		t.Errorf("passing = %d, want 12: an unassessed check must not be folded into passing", sum.Passing)
+	}
+	if sum.Critical+sum.Warnings+sum.Passing+sum.NotAssessed != sum.Total {
+		t.Errorf("the buckets (%d+%d+%d+%d) do not add up to the total (%d)",
+			sum.Critical, sum.Warnings, sum.Passing, sum.NotAssessed, sum.Total)
+	}
+}
+
+// TestEmptyCheckValueStillFails is the counterpart: an EMPTY value is not the
+// same as NOT_ASSESSED. It means the emitter produced nothing where a value was
+// expected, which is a real anomaly and must stay visible rather than being
+// quietly excused as "not assessed".
+func TestEmptyCheckValueStillFails(t *testing.T) {
+	_, sum := EvaluateChecks(decodeReport(t, `{"bestPractices": {"disasterRecovery": ""}}`))
+
+	if sum.NotAssessed != 0 {
+		t.Error("an empty value was silently treated as not assessed")
+	}
+	if sum.Critical == 0 {
+		t.Error("an empty value on a critical check must remain visible as a problem")
+	}
+}
+
+// TestAbsentGradeIsNotGradeNothing: a report with no readiness score rendered
+// "Grade ." with a score of 0/0, dressing an absent verdict up as the worst
+// possible one.
+func TestAbsentGradeIsNotGradeNothing(t *testing.T) {
+	page := BuildPage(decodeReport(t, `{"kdlVersion": "2.2.0-go"}`), Options{Now: fixedNow})
+	if page.Graded {
+		t.Error("a report with no ransomwareReadiness section reports itself as graded")
+	}
+
+	html := render(t, decodeReport(t, `{"kdlVersion": "2.2.0-go"}`))
+	if strings.Contains(html, "Grade </strong>") || strings.Contains(html, "<strong>Grade .") {
+		t.Error("an absent grade is rendered as an empty grade")
+	}
+	if !strings.Contains(html, "not scored") {
+		t.Error("an ungraded report must say so rather than showing a blank grade")
+	}
+}
+
+// TestRealGradeStillRenders is the positive control for the test above.
+func TestRealGradeStillRenders(t *testing.T) {
+	const doc = `{"ransomwareReadiness": {"grade": "B", "score": 75, "maxScore": 100}}`
+	page := BuildPage(decodeReport(t, doc), Options{Now: fixedNow})
+	if !page.Graded {
+		t.Error("a report carrying a grade reports itself as ungraded")
+	}
+	if !strings.Contains(render(t, decodeReport(t, doc)), "Grade B") {
+		t.Error("a real grade no longer renders")
 	}
 }

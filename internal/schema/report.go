@@ -54,6 +54,32 @@ type Report struct {
 	ImmutabilityDays          int                       `json:"immutabilityDays"`
 	Policies                  Policies                  `json:"policies"`
 	Profiles                  Profiles                  `json:"profiles"`
+
+	// UnpopulatedSections names top-level sections the producer of this report
+	// did not compute at all, as opposed to computed-and-found-nothing.
+	//
+	// Without it the two are indistinguishable downstream, and every consumer
+	// reads a never-collected section as a cluster with nothing in it: a report
+	// missing the licence section diffs as "3 licences removed", a missing DR
+	// section as "disaster recovery disabled". Both are alarming, both are
+	// false, and neither is detectable from the section's own contents.
+	//
+	// Empty or absent means the producer filled everything it knows about, which
+	// is the case for every report KDL.sh writes. Only the Go collector, which
+	// is still partial, populates it today.
+	UnpopulatedSections []string `json:"unpopulatedSections,omitempty"`
+}
+
+// NotCollected reports whether the named top-level section was declared
+// uncomputed by whoever produced this report. Consumers must treat such a
+// section as unknown rather than as empty.
+func (r *Report) NotCollected(section string) bool {
+	for _, s := range r.UnpopulatedSections {
+		if s == section {
+			return true
+		}
+	}
+	return false
 }
 
 // KastenCompatibility is the 2.2.0 compatibility signal: the highest Kasten

@@ -36,14 +36,20 @@
 </div>
 
 <div class="verdict">
-  <div class="grade {{.GradeClass}}">{{.Grade}}</div>
+  {{if .Graded}}<div class="grade {{.GradeClass}}">{{.Grade}}</div>{{else}}<div class="grade grade-none">?</div>{{end}}
   <div>
+    {{if .Graded}}
     <div class="head">Ransomware readiness: <strong>Grade {{.Grade}}</strong>. Critical best-practice checks failing: {{.CriticalNo}}.</div>
     <div class="sub">{{.Summary.Total}} best-practice checks | weighted ransomware score {{.Score}}/{{.MaxScore}}</div>
+    {{else}}
+    <div class="head">Ransomware readiness: <strong>not scored</strong>. This report carries no readiness score.</div>
+    <div class="sub">{{.Summary.Total}} best-practice checks, of which {{.Summary.NotAssessed}} were not assessed</div>
+    {{end}}
     <div class="findings">
       <div class="finding crit"><span class="n">{{.Summary.Critical}}</span><span class="l">Critical</span></div>
       <div class="finding warn"><span class="n">{{.Summary.Warnings}}</span><span class="l">Warnings</span></div>
       <div class="finding ok"><span class="n">{{.Summary.Passing}}</span><span class="l">Passing</span></div>
+      {{if .Summary.NotAssessed}}<div class="finding info"><span class="n">{{.Summary.NotAssessed}}</span><span class="l">Not assessed</span></div>{{end}}
     </div>
   </div>
 </div>
