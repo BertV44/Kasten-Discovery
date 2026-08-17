@@ -12,9 +12,6 @@ on:
 permissions:
   contents: read
 
-env:
-  GO_VERSION: '1.23'
-
 jobs:
   verify:
     name: Verify
@@ -22,9 +19,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
+      # actions/setup-go is deliberately not used.
+      #
+      # The runner fetches every external action from codeload.github.com during
+      # "Set up job" -- before the checkout, before any of this repository exists
+      # on the machine. On 2026-08-17 that fetch returned 503 then 429 and every
+      # run died at step 1 of 8, with nothing of ours having executed and six red
+      # annotations that named no file of ours. GitHub-hosted runners already
+      # ship a Go toolchain, so the action bought a failure mode and nothing else.
+      #
+      # The version floor moves to go.mod, which is where it is really declared.
+      # It used to be duplicated in a GO_VERSION env var, and two copies of one
+      # number drift.
+      #
+      # The trade: setup-go pins an exact toolchain and caches modules. This
+      # accepts whatever the runner ships if it is new enough, and re-downloads
+      # modules each run -- which costs more now that client-go is a dependency.
+      # A CI that runs slowly beats a CI that cannot start.
+      - name: Go toolchain
+        run: |
+          required=$(awk '/^go /{print $2; exit}' go.mod)
+          have=$(go env GOVERSION | sed 's/^go//')
+          echo "go.mod requires >= ${required}; runner has ${have}"
+          if [ "$(printf '%s\n%s\n' "$required" "$have" | sort -V | head -1)" != "$required" ]; then
+            echo "::error::runner Go ${have} is older than the ${required} go.mod requires"
+            exit 1
+          fi
+          go version
 
       # _legacy/ holds the superseded v1.0 sketch, which is not valid Go. The go
       # tool skips underscore-prefixed directories on its own; gofmt does not.
@@ -79,9 +100,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
+      # Same reasoning as the verify job: no external action, floor read from
+      # go.mod. Verify has already run by the time this job starts, so a
+      # toolchain too old has been rejected once already; repeating the check
+      # keeps this job independently correct if the two ever run apart.
+      - name: Go toolchain
+        run: |
+          required=$(awk '/^go /{print $2; exit}' go.mod)
+          have=$(go env GOVERSION | sed 's/^go//')
+          if [ "$(printf '%s\n%s\n' "$required" "$have" | sort -V | head -1)" != "$required" ]; then
+            echo "::error::runner Go ${have} is older than the ${required} go.mod requires"
+            exit 1
+          fi
+          go version
 
       # Static by construction: CGO off, and the binary embeds its own CSS, JS and
       # templates, so a single file is the whole deliverable. That is the point of
