@@ -1,11 +1,14 @@
 // Command kdl is the Go prototype of Kasten Discovery Lite.
 //
 // It replaces the three shell scripts with one binary and one subcommand each:
-// scan (collect), report (render HTML), diff (compare two reports). Only the
-// typed schema and `validate` are implemented so far -- see go/README.md.
+// scan (collect), report (render HTML), diff (compare two reports).
+//
+// scan collects the inventory and the coverage/policy analyses; the scoring
+// sections are not computed yet and `kdl scan` lists them on every run.
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -48,9 +51,25 @@ func main() {
 	}
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "kdl: %v\n", err)
-		os.Exit(1)
+		exit(err)
 	}
+}
+
+// exit honours a command that carries its own process status. `kdl diff` uses
+// the regression count as its exit code so a CI gate can call it directly, and
+// collapsing that to 1 would throw away the number the gate reads.
+func exit(err error) {
+	var coder interface{ ExitCode() int }
+	if errors.As(err, &coder) {
+		// A silent error has already been delivered by the command's own output;
+		// repeating it as "kdl: 3 regression(s) detected" adds nothing.
+		if silent, ok := err.(interface{ Silent() bool }); !ok || !silent.Silent() {
+			fmt.Fprintf(os.Stderr, "kdl: %v\n", err)
+		}
+		os.Exit(coder.ExitCode())
+	}
+	fmt.Fprintf(os.Stderr, "kdl: %v\n", err)
+	os.Exit(1)
 }
 
 func usage() {
@@ -61,9 +80,9 @@ Usage:
 
 Commands:
   validate   Load a KDL report JSON against the typed schema and summarise it
-  scan       Collect a discovery report from a cluster        (not implemented)
-  report     Render an HTML report from a report JSON         (not implemented)
-  diff       Compare two report JSONs                         (not implemented)
+  scan       Collect a discovery report from a cluster (read-only)
+  report     Render an HTML report from a report JSON
+  diff       Compare two report JSONs; exit code = number of regressions
   version    Print the prototype version
 
 Run "kdl <command> -h" for the flags of a command.
