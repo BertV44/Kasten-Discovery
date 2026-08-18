@@ -434,16 +434,12 @@ func biggestGap(p kdl.RansomwareReadinessPillars) kdl.RansomwareReadinessBiggest
 func profilesSkippingTLS(res Result) []kdl.RansomwareProfileSkippingTLS {
 	out := make([]kdl.RansomwareProfileSkippingTLS, 0)
 	for _, o := range res.Items("profiles") {
-		spec := mapAt(o.Object, "spec")
-		// Both spellings: skipSSLVerify is the legacy key, skipCertVerification
-		// the newer one, and profiles in the field carry either.
-		for _, key := range []string{"skipSSLVerify", "skipCertVerification"} {
-			if v, ok := deepFirstAny(spec, key); ok {
-				if b, isBool := v.(bool); isBool && b {
-					out = append(out, kdl.RansomwareProfileSkippingTLS{Name: name(o)})
-					break
-				}
-			}
+		// Both spellings: skipSSLVerify is the legacy key, skipCertVerification the
+		// newer one, and profiles in the field carry either. Any occurrence being
+		// true is what counts -- one unverified endpoint on a profile is an
+		// unverified profile, and a shallow false must not mask a deeper true.
+		if deepAnyTrue(mapAt(o.Object, "spec"), "skipSSLVerify", "skipCertVerification") {
+			out = append(out, kdl.RansomwareProfileSkippingTLS{Name: name(o)})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

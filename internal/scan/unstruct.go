@@ -158,6 +158,47 @@ func emptyValue(v any) bool {
 	return false
 }
 
+// deepAnyTrue reports whether ANY occurrence of any of the keys, anywhere in the
+// object, is boolean true.
+//
+// It is not deepFirstAny with a bool check, and the difference is a real bug that
+// shape produced. deepFirstAny returns the SHALLOWEST occurrence, so a profile
+// carrying `locationSpec.objectStore.skipSSLVerify: false` alongside
+// `locationSpec.vbr.skipSSLVerify: true` resolved to the first one and the profile
+// was reported as verifying TLS. That is the same false clean bill of health
+// KDL.sh's 2.2.0 fix was about, reintroduced one level down: its own test is
+// `[.. | objects | (.skipSSLVerify? // .skipCertVerification? // empty) |
+// select(. == true)] | length > 0` -- any occurrence, not the first.
+//
+// For a flag that disables certificate verification, any occurrence being true is
+// the only safe reading: one unverified endpoint on a profile is an unverified
+// profile.
+func deepAnyTrue(obj any, keys ...string) bool {
+	level := []any{obj}
+	for depth := 0; depth < maxDeepScanDepth && len(level) > 0; depth++ {
+		var next []any
+		for _, node := range level {
+			m, ok := node.(map[string]any)
+			if !ok {
+				if arr, isArr := node.([]any); isArr {
+					next = append(next, arr...)
+				}
+				continue
+			}
+			for _, key := range keys {
+				if b, isBool := m[key].(bool); isBool && b {
+					return true
+				}
+			}
+			for _, k := range sortedKeys(m) {
+				next = append(next, m[k])
+			}
+		}
+		level = next
+	}
+	return false
+}
+
 // deepFirstNumber is deepFirstString for numeric fields such as
 // protectionPeriod, which Kasten emits as a number on some backends and as a
 // duration string on others.
@@ -215,6 +256,8 @@ func protectionDays(v any) (int, bool) {
 
 func toNumber(v any) (float64, bool) {
 	switch n := v.(type) {
+	case int:
+		return float64(n), true
 	case int64:
 		return float64(n), true
 	case float64:

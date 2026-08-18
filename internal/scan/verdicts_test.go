@@ -381,3 +381,51 @@ func TestDeniedVMReadIsNotNoVMs(t *testing.T) {
 		t.Errorf("vmProtection = %q, want %q on a cluster with no KubeVirt", got, statusNA)
 	}
 }
+
+// TestTLSPillarIsNotFooledByAShallowFalse: a profile can carry the flag twice --
+// false on one endpoint, true on another -- and taking the shallowest occurrence
+// reported it as verifying TLS. That is KDL.sh's 2.2.0 bug reintroduced one level
+// down, and it hands a free 5/5 to a cluster exporting over unverified TLS.
+func TestTLSPillarIsNotFooledByAShallowFalse(t *testing.T) {
+	lists := healthyCluster()
+	lists["profiles"] = append(lists["profiles"], unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": "mixed-endpoints"},
+		"spec": map[string]any{"locationSpec": map[string]any{
+			// Sorted first, so any "shallowest wins" rule resolves here.
+			"objectStore": map[string]any{"skipSSLVerify": false},
+			"vbr":         map[string]any{"repoName": "hardened-01", "skipSSLVerify": true},
+		}},
+	}})
+
+	r := buildAt(t, lists)
+	tls := r.RansomwareReadiness.Pillars.TLSVerification
+	if tls.Score != 0 {
+		t.Errorf("TLS pillar = %+v, want 0: one endpoint of the profile skips verification", tls)
+	}
+	if len(tls.ProfilesSkippingTLS) != 1 || tls.ProfilesSkippingTLS[0].Name != "mixed-endpoints" {
+		t.Errorf("profilesSkippingTls = %+v, want mixed-endpoints named", tls.ProfilesSkippingTLS)
+	}
+}
+
+// TestTLSPillarPassesWhenEveryFlagIsFalse is the positive control: without it the
+// fix above could pass by flagging every profile.
+func TestTLSPillarPassesWhenEveryFlagIsFalse(t *testing.T) {
+	lists := healthyCluster()
+	lists["profiles"] = append(lists["profiles"], unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": "all-verified"},
+		"spec": map[string]any{"locationSpec": map[string]any{
+			"objectStore": map[string]any{"skipSSLVerify": false},
+			"vbr":         map[string]any{"skipCertVerification": false},
+		}},
+	}})
+
+	r := buildAt(t, lists)
+	tls := r.RansomwareReadiness.Pillars.TLSVerification
+	if tls.Score != pillarTLSVerificationMax || !tls.Evidence {
+		t.Errorf("TLS pillar = %+v, want the full %d: every flag is false",
+			tls, pillarTLSVerificationMax)
+	}
+	if len(tls.ProfilesSkippingTLS) != 0 {
+		t.Errorf("profilesSkippingTls = %+v, want empty", tls.ProfilesSkippingTLS)
+	}
+}
