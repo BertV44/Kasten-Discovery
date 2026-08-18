@@ -24,13 +24,27 @@ even `jq`, is often not an option.
 
 ### What `kdl scan` does not do
 
-One figure, and it is not a missing feature: **catalog free space**. `KDL.sh` gets
-it by running `df` inside the catalog pod, and a pod exec is a *create* against
-`pods/exec` — a verb the read-only Reader does not have and which
+There is no section it cannot compute. There is one figure it cannot compute
+*unconditionally*: **catalog free space**.
+
+`KDL.sh` gets it by running `df` inside the catalog pod, and a pod exec is a
+*create* against `pods/exec` — a verb the read-only Reader does not have and which
 `readonly_test.go` fails the build for so much as naming. "KDL never mutates the
 cluster" is a promise made to customers and a percentage is not worth weakening it
-for, so `catalog.freeSpacePercent` is emitted as `null` and declared uncomputed.
-The catalog PVC and its size are collected normally.
+for. So the figure comes from the kubelet instead, which already measures every
+volume it mounts and publishes the numbers on a `GET`:
+
+```
+GET /api/v1/nodes/<node>/proxy/stats/summary
+```
+
+That needs `get` on `nodes/proxy`, which is **not** a permission K10 itself
+requires, so most clusters will not have granted it. When they have not, the
+percentages stay `null`, `catalog.freeSpacePercent` is declared uncomputed, and
+the PVC and its size are still collected. The refusal costs nothing else: the read
+sits outside the collection plan on purpose, so it never sets `rbacLimited` on the
+whole report — six reads were once removed from that plan for exactly that
+mistake.
 
 Everything else `kdl scan` leaves empty is either genuinely empty or declared,
 **per run**, as a read that did not return. That declaration is the mechanism the
@@ -68,6 +82,12 @@ calling out because they are the widest asks in the plan:
   no distinguishing label and their names vary across installs and renewals. Only
   secrets whose name contains `license` are looked at, and nothing from the
   payload reaches the report except the licence fields the schema models.
+
+One permission is **optional** and worth granting only if you want the figure:
+`get` on `nodes/proxy`, for catalog free space. It is a privileged permission — it
+reaches the kubelet API generally — so the scan asks for it best-effort and
+carries on without it. Nothing else in the report depends on it, and no
+best-practice check or ransomware pillar reads it.
 
 **The collector has never been exercised against a live Kasten install.** Its
 field paths are derived from `KDL.sh`'s jq expressions rather than from the
@@ -162,7 +182,8 @@ internal/report/      HTML renderer, all 35 sections
   templates/          page.tmpl plus one block per irregular section
   assets/             style.css and app.js, embedded at build time
 internal/scan/        cluster collector
-  client.go           the read-only Reader: no write verb exists on it
+  client.go           the read-only Reader: no write verb exists on it, and the
+                      kubelet volume-stats GET is the narrowest shape that works
   resources.go        the collection plan, derived from KDL.sh's kubectl calls
   collect.go          parallel fetch; denied / absent / failed kept apart
   unstruct.go         bounded deep scan, the Go twin of KDL.sh's deep_first

@@ -87,6 +87,12 @@ func Build(res Result) *kdl.Report {
 	if !cfg.usable() {
 		alsoUnpopulated = append(alsoUnpopulated, "k10Configuration")
 	}
+	// The catalog's free space is measured by the kubelet, through a read most
+	// clusters do not grant. Declared only when it really is absent: on a cluster
+	// that does grant it the figure is real and must stay comparable.
+	if r.Catalog.FreeSpacePercent == nil {
+		alsoUnpopulated = append(alsoUnpopulated, "catalog.freeSpacePercent")
+	}
 
 	// The verdicts run last, and they read the report rather than the collection:
 	// every check asks whether the section it grades was populated, which means
@@ -123,16 +129,14 @@ func Build(res Result) *kdl.Report {
 // compute. It is emitted in the scan summary rather than kept as a comment,
 // because a user comparing a Go report against a KDL.sh one needs to know which
 // empty sections are "nothing found" and which are "not implemented".
+// It is empty, and that is the goal state rather than an oversight: there is no
+// longer a section this build cannot compute at all. Everything a given run
+// leaves empty is declared by unpopulatedFor instead, against that run's reads.
+// The function stays because the distinction it draws is the one a reader needs
+// -- "this tool never does that" is a different message from "this run could
+// not" -- and the next section added will be listed here first.
 func UnpopulatedSections() []string {
-	return []string{
-		// The catalog's free space is the one figure this collector structurally
-		// cannot produce: it is measured by running df inside the catalog pod, and
-		// a pod exec is a create against pods/exec -- a verb the read-only Reader
-		// does not have and readonly_test.go forbids naming. The rest of the
-		// catalog section is collected; only this sub-path is declared, so a real
-		// change in the PVC or its size is still compared.
-		"catalog.freeSpacePercent",
-	}
+	return nil
 }
 
 // sectionInputs names the collections each computed section is derived from.

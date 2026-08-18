@@ -175,16 +175,24 @@ func printSummary(w *os.File, res Result, version string, declared []string) {
 	}
 
 	notImplemented := UnpopulatedSections()
-	fmt.Fprintf(w, "\nSections this collector does not compute yet:\n  %s\n",
-		strings.Join(notImplemented, ", "))
+	if len(notImplemented) > 0 {
+		fmt.Fprintf(w, "\nSections this collector does not compute yet:\n  %s\n",
+			strings.Join(notImplemented, ", "))
+	}
 
 	// A section the collector *can* compute but whose input this run did not
 	// return is a different message, and the more urgent one: it is fixable by
 	// granting a permission or retrying, and until then the section is unknown
 	// rather than empty.
 	if skipped := without(declared, notImplemented); len(skipped) > 0 {
-		fmt.Fprintf(w, "\nSections skipped in THIS report because a read did not return:\n  %s\n",
+		fmt.Fprintf(w, "\nNot populated in THIS report -- a read did not return, or was not granted:\n  %s\n",
 			strings.Join(skipped, ", "))
+	}
+	if err := res.VolumeStatsErr; err != nil {
+		// Said plainly rather than folded into the list above, because it is the
+		// one read whose absence is expected: get on nodes/proxy is not a
+		// permission K10 needs, so most clusters will not have granted it.
+		fmt.Fprintf(w, "\nCatalog free space not measured (needs `get nodes/proxy`): %v\n", err)
 	}
 }
 

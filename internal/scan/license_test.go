@@ -362,3 +362,172 @@ func TestExportStorageSaysWhyItIsAbsent(t *testing.T) {
 		t.Errorf("dedup = %q, want 2.0x (logical / physical)", got)
 	}
 }
+
+// catalogPod is the pod whose node hosts the catalog volume. Its nodeName is how
+// the collector knows which kubelet to ask.
+func catalogPod(name, node string, labels map[string]any) unstructured.Unstructured {
+	return unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Pod",
+		"metadata":   map[string]any{"name": name, "namespace": "kasten-io", "labels": labels},
+		"spec":       map[string]any{"nodeName": node},
+		"status":     map[string]any{"phase": "Running"},
+	}}
+}
+
+func catalogClaim() unstructured.Unstructured {
+	return unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "PersistentVolumeClaim",
+		"metadata": map[string]any{
+			"name": "catalog-pv-claim", "namespace": "kasten-io",
+			"labels": map[string]any{"component": "catalog"},
+		},
+		"status": map[string]any{"capacity": map[string]any{"storage": "20Gi"}},
+	}}
+}
+
+// TestCatalogFreeSpaceComesFromTheKubelet: the figure KDL.sh gets by running df
+// in the catalog pod is available on a GET, because the kubelet already measures
+// every volume it mounts.
+func TestCatalogFreeSpaceComesFromTheKubelet(t *testing.T) {
+	res := collect(t, &fakeReader{
+		lists: map[string][]unstructured.Unstructured{
+			"persistentvolumeclaims": {catalogClaim()},
+			"pods":                   {catalogPod("catalog-svc-0", "worker-3", map[string]any{"component": "catalog"})},
+		},
+		volumeStats: []VolumeStat{{
+			PVCNamespace: "kasten-io", PVCName: "catalog-pv-claim",
+			CapacityBytes: 20 * 1024 * 1024 * 1024,
+			UsedBytes:     15 * 1024 * 1024 * 1024,
+		}},
+	})
+	res.CollectedAt = testNow
+	r := Build(res)
+
+	if r.Catalog.UsedPercent == nil || *r.Catalog.UsedPercent != 75 {
+		t.Errorf("usedPercent = %v, want 75 (15 GiB of 20)", r.Catalog.UsedPercent)
+	}
+	if r.Catalog.FreeSpacePercent == nil || *r.Catalog.FreeSpacePercent != 25 {
+		t.Errorf("freeSpacePercent = %v, want 25", r.Catalog.FreeSpacePercent)
+	}
+	// Measured, so it must stay comparable: declaring it would make kdl diff stop
+	// noticing a catalog that is filling up, which is the reason to measure it.
+	if r.NotCollected("catalog.freeSpacePercent") {
+		t.Error("catalog.freeSpacePercent is declared uncomputed although the kubelet measured it")
+	}
+}
+
+// TestDeniedNodeProxyLeavesTheCatalogUnmeasured, and must not degrade anything
+// else. `get nodes/proxy` is not a permission K10 needs, so this is the expected
+// outcome on most clusters -- and it must cost nothing but the one figure.
+func TestDeniedNodeProxyLeavesTheCatalogUnmeasured(t *testing.T) {
+	res := collect(t, &fakeReader{
+		lists: map[string][]unstructured.Unstructured{
+			"persistentvolumeclaims": {catalogClaim()},
+			"pods":                   {catalogPod("catalog-svc-0", "worker-3", map[string]any{"component": "catalog"})},
+		},
+		volumeStatsErr: forbidden("nodes/proxy"),
+	})
+	res.CollectedAt = testNow
+	r := Build(res)
+
+	if r.Catalog.PVCName != "catalog-pv-claim" || r.Catalog.Size != "20Gi" {
+		t.Errorf("catalog = %+v, want the PVC still identified", r.Catalog)
+	}
+	if r.Catalog.FreeSpacePercent != nil {
+		t.Errorf("freeSpacePercent = %v, want null with the measurement refused", *r.Catalog.FreeSpacePercent)
+	}
+	if !r.NotCollected("catalog.freeSpacePercent") {
+		t.Error("catalog.freeSpacePercent is not declared, so a consumer reads null as zero")
+	}
+
+	// The critical part: an optional measurement must not mark the whole report
+	// RBAC-degraded. Six reads were removed from the collection plan for exactly
+	// that, and routing this one through it would reintroduce the mistake.
+	if r.RBACLimited != nil {
+		t.Errorf("rbacLimited = %+v, but only the optional volume measurement was refused; "+
+			"every report from a cluster without nodes/proxy would be flagged as degraded",
+			r.RBACLimited)
+	}
+	if r.NotCollected("catalog") {
+		t.Error("the whole catalog section is declared; only the free-space figure is missing")
+	}
+}
+
+// TestVolumeStatsWithoutCapacityAreDiscarded: a CSI driver that does not
+// implement NodeGetVolumeStats reports the volume with no numbers, and dividing
+// by that would report a full disk from an absent measurement.
+func TestVolumeStatsWithoutCapacityAreDiscarded(t *testing.T) {
+	res := collect(t, &fakeReader{
+		lists: map[string][]unstructured.Unstructured{
+			"persistentvolumeclaims": {catalogClaim()},
+			"pods":                   {catalogPod("catalog-svc-0", "worker-3", map[string]any{"component": "catalog"})},
+		},
+		volumeStats: []VolumeStat{{
+			PVCNamespace: "kasten-io", PVCName: "catalog-pv-claim",
+		}},
+	})
+	res.CollectedAt = testNow
+	r := Build(res)
+
+	if r.Catalog.FreeSpacePercent != nil {
+		t.Errorf("freeSpacePercent = %v, want null: the driver reported no capacity",
+			*r.Catalog.FreeSpacePercent)
+	}
+}
+
+// TestVolumeStatsForAnotherPVCAreNotTheCatalogs: the node hosts many volumes, and
+// matching the wrong one would report another workload's fullness as the
+// catalog's.
+func TestVolumeStatsForAnotherPVCAreNotTheCatalogs(t *testing.T) {
+	res := collect(t, &fakeReader{
+		lists: map[string][]unstructured.Unstructured{
+			"persistentvolumeclaims": {catalogClaim()},
+			"pods":                   {catalogPod("catalog-svc-0", "worker-3", map[string]any{"component": "catalog"})},
+		},
+		volumeStats: []VolumeStat{
+			{PVCNamespace: "apps", PVCName: "postgres-data",
+				CapacityBytes: 1024, UsedBytes: 1023},
+			// Same claim name, different namespace.
+			{PVCNamespace: "other", PVCName: "catalog-pv-claim",
+				CapacityBytes: 1024, UsedBytes: 1024},
+		},
+	})
+	res.CollectedAt = testNow
+	r := Build(res)
+
+	if r.Catalog.FreeSpacePercent != nil {
+		t.Errorf("freeSpacePercent = %v, want null: no stat matches kasten-io/catalog-pv-claim",
+			*r.Catalog.FreeSpacePercent)
+	}
+}
+
+// TestCatalogNodeIsFoundByNameWhenTheLabelIsMissing: the component=catalog label
+// scheme varies with the chart version and the install method, and a cluster
+// where it does not match is the kind of install that most needs the report.
+func TestCatalogNodeIsFoundByNameWhenTheLabelIsMissing(t *testing.T) {
+	res := Result{Collections: map[string]Collection{
+		"k10Pods": {Key: "k10Pods", Items: []unstructured.Unstructured{
+			catalogPod("gateway-abc", "worker-1", nil),
+			catalogPod("catalog-svc-0", "worker-7", nil),
+		}},
+	}}
+	if got := catalogNode(res); got != "worker-7" {
+		t.Errorf("catalogNode = %q, want worker-7 found by name", got)
+	}
+
+	labelled := Result{Collections: map[string]Collection{
+		"k10Pods": {Key: "k10Pods", Items: []unstructured.Unstructured{
+			catalogPod("catalog-svc-0", "worker-7", nil),
+			catalogPod("some-other-pod", "worker-2", map[string]any{"component": "catalog"}),
+		}},
+	}}
+	if got := catalogNode(labelled); got != "worker-2" {
+		t.Errorf("catalogNode = %q, want the labelled pod to win over the name match", got)
+	}
+
+	if got := catalogNode(Result{Collections: map[string]Collection{}}); got != "" {
+		t.Errorf("catalogNode = %q, want empty with no pods: there is nothing to ask", got)
+	}
+}

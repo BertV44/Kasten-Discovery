@@ -207,8 +207,11 @@ jobs:
             than confirmed until you have compared one against a `KDL.sh` report
             from the same cluster.
 
-            It computes every report section bar one figure: catalog free space
-            needs a pod exec, which is a write verb this collector does not have.
+            It computes every report section. One figure is conditional: catalog
+            free space is read from the kubelet's volume stats, which needs `get`
+            on `nodes/proxy` — a permission K10 itself does not require, so the
+            scan asks best-effort and carries on without it.
+
             Anything it could not read is named in the report's
             `unpopulatedSections`, printed on every run, skipped by `kdl diff` and
             shown as uncollected in the HTML — so a partial scan is never

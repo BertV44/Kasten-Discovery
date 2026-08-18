@@ -22,6 +22,11 @@ type fakeReader struct {
 	served   map[string]bool
 	version  string
 	discoErr error
+	// volumeStats is what the kubelet on any node reports; volumeStatsErr stands
+	// in for the RBAC denial that is the expected outcome on most clusters, since
+	// get on nodes/proxy is not a permission K10 itself needs.
+	volumeStats    []VolumeStat
+	volumeStatsErr error
 }
 
 func (f *fakeReader) key(gvr k8sschema.GroupVersionResource) string { return gvr.Resource }
@@ -39,6 +44,10 @@ func (f *fakeReader) Get(_ context.Context, gvr k8sschema.GroupVersionResource, 
 		return nil, err
 	}
 	return &unstructured.Unstructured{}, nil
+}
+
+func (f *fakeReader) NodeVolumeStats(_ context.Context, _ string) ([]VolumeStat, error) {
+	return f.volumeStats, f.volumeStatsErr
 }
 
 func (f *fakeReader) ServerVersion() (string, error) { return f.version, nil }

@@ -17,16 +17,19 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-// buildCatalog identifies the catalog PVC and its size.
+// buildCatalog identifies the catalog PVC, its size, and how full it is.
 //
-// Free space is deliberately not filled in. The figure comes from running df
-// inside the catalog pod, and a pod exec is a create against the pods/exec
-// subresource -- a write verb the Reader has none of, and which
-// readonly_test.go fails the build for so much as naming. "KDL never mutates the
-// cluster" is a promise made to customers, and a percentage is not worth
-// weakening it for; the fields stay null, the schema says why, and the renderer
-// prints "not measured" rather than the 0% that would read as a catalog about to
-// fail.
+// The fullness is measured by the kubelet, not by running df in the catalog pod.
+// KDL.sh does the latter, and this collector cannot: a pod exec is a create
+// against pods/exec, a write verb the Reader has none of and which
+// readonly_test.go fails the build for so much as naming. The kubelet already
+// measures every volume it mounts and publishes the numbers on a GET, so the
+// same figure is available without weakening a promise made to customers.
+//
+// It is still often absent, because reading it needs get on nodes/proxy and that
+// is not a permission K10 itself requires. When it is, the percentages stay null,
+// the section declares catalog.freeSpacePercent, and the renderer prints "not
+// measured" rather than the 0% that would read as a catalog about to fail.
 func buildCatalog(res Result, r *kdl.Report) {
 	pvc, found := catalogPVC(res)
 	if !found {
@@ -37,6 +40,24 @@ func buildCatalog(res Result, r *kdl.Report) {
 		PVCName: name(pvc),
 		Size:    pvcSize(pvc),
 	}
+
+	stat, measured := res.VolumeStats[namespace(pvc)+"/"+name(pvc)]
+	// A driver that does not implement NodeGetVolumeStats reports the volume with
+	// no capacity. Dividing by that would be reporting a full disk from an absent
+	// measurement, which is the failure this whole section is careful about.
+	if !measured || stat.CapacityBytes == 0 {
+		return
+	}
+	used := int(stat.UsedBytes * 100 / stat.CapacityBytes)
+	if used > 100 {
+		// The kubelet reports usage against the filesystem, which can exceed the
+		// requested capacity on some backends. Clamping keeps the progress bar and
+		// the free figure consistent rather than emitting a negative percentage.
+		used = 100
+	}
+	free := 100 - used
+	r.Catalog.UsedPercent = &used
+	r.Catalog.FreeSpacePercent = &free
 }
 
 // catalogPVC finds the catalog claim by label, then by name.

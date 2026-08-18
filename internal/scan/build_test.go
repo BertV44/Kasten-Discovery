@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -332,22 +333,75 @@ func TestExcludedNamespaceIsNotCountedProtected(t *testing.T) {
 
 // TestUnpopulatedSectionsIsHonest guards the one thing a user comparing this
 // against a KDL.sh report depends on: knowing which empty sections are "nothing
-// found" and which are "not implemented".
+// found" and which were never read.
+//
+// It checks the declaration in both directions, because either error is
+// expensive. Declaring a section that WAS computed makes kdl diff stop comparing
+// real data and blanks a real finding out of the page; failing to declare one
+// that was NOT computed is the misleading zero the whole mechanism exists to
+// prevent.
 func TestUnpopulatedSectionsIsHonest(t *testing.T) {
-	listed := UnpopulatedSections()
-	if len(listed) == 0 {
-		t.Fatal("UnpopulatedSections is empty; the collector does not yet fill every section")
-	}
-	r := buildFrom(t, map[string][]unstructured.Unstructured{})
-	// A section claimed as populated must not be in the not-implemented list.
-	for _, s := range listed {
-		if s == "policies" || s == "profiles" || s == "coverage" || s == "policyAnalysis" {
-			t.Errorf("%q is listed as unpopulated but the collector does fill it", s)
+	// A name that is not a real section silently disables its own declaration:
+	// NotCollected matches on the string, so a typo means nothing is ever
+	// declared for that section and no test would otherwise notice.
+	valid := topLevelSectionNames(t)
+	for section := range sectionInputs {
+		top, _, _ := strings.Cut(section, ".")
+		if !valid[top] {
+			t.Errorf("sectionInputs names %q, which is not a section of the report; "+
+				"its declaration can never match", section)
 		}
 	}
-	if r.KDLVersion != ScanVersion {
-		t.Errorf("kdlVersion = %q, want %q so a Go-collected report is identifiable", r.KDLVersion, ScanVersion)
+	for _, section := range UnpopulatedSections() {
+		top, _, _ := strings.Cut(section, ".")
+		if !valid[top] {
+			t.Errorf("UnpopulatedSections names %q, which is not a section of the report", section)
+		}
 	}
+
+	// A run where every read succeeded must declare nothing it actually computed.
+	healthy := buildFrom(t, sampleCluster())
+	for _, section := range []string{
+		"policies", "profiles", "coverage", "policyAnalysis", "health", "k10Rbac",
+		"failedActionsTop5", "stuckActions", "namespaceProtectionStatus",
+		"profileValidation", "retentionAnalysis", "disasterRecovery", "monitoring",
+		"reportsPolicy", "dataUsage", "license",
+	} {
+		if healthy.NotCollected(section) {
+			t.Errorf("%q is declared uncomputed on a run where every read succeeded", section)
+		}
+	}
+	if healthy.KDLVersion != ScanVersion {
+		t.Errorf("kdlVersion = %q, want %q so a Go-collected report is identifiable",
+			healthy.KDLVersion, ScanVersion)
+	}
+
+	// And a run where a read was refused must declare what depended on it.
+	denied := Build(collect(t, &fakeReader{errs: map[string]error{
+		"policies": forbidden("policies"), "secrets": forbidden("secrets"),
+	}}))
+	for _, section := range []string{
+		"orphanedRestorePoints", "retentionAnalysis", "disasterRecovery", "license",
+	} {
+		if !denied.NotCollected(section) {
+			t.Errorf("%q is not declared although the read it needs was refused", section)
+		}
+	}
+}
+
+// topLevelSectionNames reads the report's own JSON tags, so the check above
+// cannot drift from the schema.
+func topLevelSectionNames(t *testing.T) map[string]bool {
+	t.Helper()
+	out := map[string]bool{}
+	rt := reflect.TypeOf(kdl.Report{})
+	for i := 0; i < rt.NumField(); i++ {
+		tag, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+		if tag != "" && tag != "-" {
+			out[tag] = true
+		}
+	}
+	return out
 }
 
 func deref(s *string) string {

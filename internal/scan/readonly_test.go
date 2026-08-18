@@ -12,9 +12,15 @@ import (
 
 // writeVerbs are the method names that mutate a cluster through client-go.
 // Watch is absent on purpose: it is a read.
+//
+// Post and Put are here because the package now holds a rest.Interface, to reach
+// the node proxy subresource the dynamic client cannot address. That type builds
+// requests by HTTP method rather than by verb, so a mutation through it would be
+// spelled Post or Put and would have sailed past a list of typed-client verbs.
+// The guard has to cover the narrowest client in the package, not the tidiest.
 var writeVerbs = []string{
 	"Create", "Update", "UpdateStatus", "Patch", "Apply", "ApplyStatus",
-	"Delete", "DeleteCollection",
+	"Delete", "DeleteCollection", "Post", "Put",
 }
 
 // TestReaderExposesNoWriteVerb: "KDL never mutates the cluster" is a promise
