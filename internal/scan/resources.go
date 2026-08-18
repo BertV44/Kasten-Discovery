@@ -77,6 +77,7 @@ var (
 	// Platform detection and virtualization.
 	gvrRoutes          = k8sschema.GroupVersionResource{Group: "route.openshift.io", Version: "v1", Resource: "routes"}
 	gvrVirtualMachines = k8sschema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachines"}
+	gvrKubeVirts       = k8sschema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "kubevirts"}
 	gvrSCC             = k8sschema.GroupVersionResource{Group: "security.openshift.io", Version: "v1", Resource: "securitycontextconstraints"}
 )
 
@@ -185,6 +186,10 @@ func targets(opts Options) []target {
 		{key: "routes", gvr: gvrRoutes, namespaced: true, optional: true},
 		{key: "scc", gvr: gvrSCC, optional: true},
 		{key: "virtualMachines", gvr: gvrVirtualMachines, optional: true},
+		// The KubeVirt CR carries the virtualization stack's version, which the
+		// report shows beside the VM inventory. It is back in the plan on the terms
+		// the comment above sets: kubeVirtVersion is the code that consumes it.
+		{key: "kubeVirts", gvr: gvrKubeVirts, optional: true},
 
 		// K10's own configuration. The ConfigMap is the fallback source for every
 		// setting the Helm values would otherwise answer, and also carries the

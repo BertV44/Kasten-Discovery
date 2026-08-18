@@ -67,6 +67,7 @@ func Build(res Result) *kdl.Report {
 	buildPolicyExclusions(res, r)
 	buildUnprotectedBreakdown(r, cfg)
 	buildNonDefaultSettings(r)
+	buildVirtualizationConfig(r, cfg)
 	buildVMRestorePointConsistency(res, r)
 	buildCatalog(res, r)
 	buildDataUsage(res, r)
@@ -653,6 +654,38 @@ func buildNamespaces(res Result, r *kdl.Report) {
 	}
 }
 
+// csiProvisionerPattern matches a CSI provisioner name, mirroring KDL.sh's
+// `test("\\.csi\\.|csi\\."; "i")`: in-tree provisioners cannot take CSI
+// snapshots and must not be reported as missing a snapshot class they never use.
+var csiProvisionerPattern = regexp.MustCompile(`(?i)(\.csi\.|csi\.)`)
+
+func isCSIProvisioner(provisioner string) bool {
+	return csiProvisionerPattern.MatchString(provisioner)
+}
+
+// importProfile resolves the profile an import policy pulls from. It reads the
+// raw object because importParameters is not modelled on the typed policy.
+func importProfile(res Result, policyName string) string {
+	for _, o := range res.Items("policies") {
+		if name(o) != policyName {
+			continue
+		}
+		for _, a := range slice(o.Object, "spec", "actions") {
+			am, ok := a.(map[string]any)
+			if !ok {
+				continue
+			}
+			if verb, _ := str(am, "action"); verb != "import" {
+				continue
+			}
+			if v, found := str(am, "importParameters", "profile", "name"); found {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
 // systemNamespacePattern is KDL.sh's SYSTEM_NS_PATTERNS, copied verbatim.
 //
 // It is an *unanchored, case-insensitive* alternation on purpose: "monitoring"
@@ -719,6 +752,40 @@ func buildVirtualization(res Result, r *kdl.Report) {
 	if r.Platform == "OpenShift" {
 		r.Virtualization.Platform = "OpenShift Virtualization"
 	}
+	r.Virtualization.Version = kubeVirtVersion(res)
+}
+
+// kubeVirtVersion reads the virtualization stack's version off the KubeVirt CR.
+//
+// KDL.sh resolves it three ways -- the OpenShift Virtualization CSV, a Harvester
+// setting, then the KubeVirt CR -- and only the third is reachable here: the other
+// two need reads that feed nothing else in the report. "unknown" is therefore the
+// honest answer on a cluster whose KubeVirt CR is not readable, and it is the word
+// KDL.sh uses for the same case.
+func kubeVirtVersion(res Result) string {
+	for _, o := range res.Items("kubeVirts") {
+		if v, ok := str(o.Object, "status", "observedKubeVirtVersion"); ok && v != "" {
+			return v
+		}
+	}
+	return "unknown"
+}
+
+// buildVirtualizationConfig fills the two virtualization values that live in
+// K10's configuration rather than on any VM, so it runs after the config is
+// loaded.
+//
+// Both matter operationally: the freeze timeout is how long Kasten waits for the
+// guest agent before falling back to a crash-consistent snapshot, and the
+// concurrency limit is why a hundred-VM cluster takes all night.
+func buildVirtualizationConfig(r *kdl.Report, cfg installConfig) {
+	if r.Virtualization.TotalVMs == 0 && r.Virtualization.Platform == "" {
+		return
+	}
+	r.Virtualization.FreezeConfiguration.Timeout =
+		cfg.strOr("kubeVirtVMs.snapshot.unfreezeTimeout", "5m0s")
+	r.Virtualization.SnapshotConcurrency =
+		cfg.strOr("limiter.vmSnapshotsPerCluster", "1")
 }
 
 func buildStorage(res Result, r *kdl.Report) {
@@ -775,6 +842,31 @@ func buildStorage(res Result, r *kdl.Report) {
 		r.VolumeSnapshotClasses.Items = items
 		r.VolumeSnapshotClasses.Count = len(items)
 		r.VolumeSnapshotClasses.DefaultCount = def
+
+		// A CSI provisioner with no matching VolumeSnapshotClass cannot be backed
+		// up through CSI snapshots at all -- it needs a Kanister blueprint or
+		// generic volume backup instead -- and that is one of the most frequent
+		// root causes of a backup that fails on one storage class only. Both reads
+		// are needed, so it is computed here rather than in either branch alone.
+		if scRead.OK() {
+			withClass := map[string]bool{}
+			for _, vsc := range items {
+				withClass[vsc.Driver] = true
+			}
+			missing := make([]string, 0)
+			seen := map[string]bool{}
+			for _, sc := range r.StorageClasses.Items {
+				if !isCSIProvisioner(sc.Provisioner) || withClass[sc.Provisioner] || seen[sc.Provisioner] {
+					continue
+				}
+				seen[sc.Provisioner] = true
+				missing = append(missing, sc.Provisioner)
+			}
+			sort.Strings(missing)
+			r.VolumeSnapshotClasses.CSIDriversWithoutVSC = kdl.VolumeSnapshotClassesCSIDriversWithoutVSC{
+				Count: len(missing), Drivers: missing,
+			}
+		}
 	}
 }
 
@@ -899,6 +991,10 @@ func buildRBACInventory(res Result, r *kdl.Report) {
 
 	if crb.OK() {
 		subjects := map[string]kdl.K10RBACSubjectsItem{}
+		// The bindings themselves, not only their count: a count says somebody has
+		// access, the list says who through which role, which is the whole point of
+		// an RBAC inventory in an audit.
+		bindingItems := make([]kdl.K10RBACClusterRoleBindingsItem, 0)
 		count := 0
 		for _, o := range crb.Items {
 			roleRef, _ := str(o.Object, "roleRef", "name")
@@ -906,6 +1002,11 @@ func buildRBACInventory(res Result, r *kdl.Report) {
 				continue
 			}
 			count++
+			binding := kdl.K10RBACClusterRoleBindingsItem{
+				Name:     name(o),
+				RoleRef:  roleRef,
+				Subjects: make([]kdl.K10RBACClusterRoleBindingsItemSubject, 0),
+			}
 			for _, s := range slice(o.Object, "subjects") {
 				sm, ok := s.(map[string]any)
 				if !ok {
@@ -917,13 +1018,20 @@ func buildRBACInventory(res Result, r *kdl.Report) {
 					continue
 				}
 				item := kdl.K10RBACSubjectsItem{Kind: kind, Name: nm}
+				bound := kdl.K10RBACClusterRoleBindingsItemSubject{Kind: kind, Name: nm}
 				if ns, ok := str(sm, "namespace"); ok {
 					item.Namespace = &ns
+					bound.Namespace = &ns
 				}
 				subjects[kind+"/"+nm] = item
+				binding.Subjects = append(binding.Subjects, bound)
 			}
+			bindingItems = append(bindingItems, binding)
 		}
-		r.K10RBAC.ClusterRoleBindings = kdl.K10RBACClusterRoleBindings{Count: count}
+		sort.Slice(bindingItems, func(i, j int) bool { return bindingItems[i].Name < bindingItems[j].Name })
+		r.K10RBAC.ClusterRoleBindings = kdl.K10RBACClusterRoleBindings{
+			Count: count, Items: bindingItems,
+		}
 
 		keys := make([]string, 0, len(subjects))
 		for k := range subjects {
@@ -946,10 +1054,47 @@ func buildRBACInventory(res Result, r *kdl.Report) {
 	}
 
 	if roles.OK() {
-		r.K10RBAC.Roles = kdl.K10RBACRoles{Count: len(roles.Items)}
+		items := make([]kdl.K10RBACRolesItem, 0, len(roles.Items))
+		for _, o := range roles.Items {
+			items = append(items, kdl.K10RBACRolesItem{
+				Name:       name(o),
+				Namespace:  namespace(o),
+				RulesCount: len(slice(o.Object, "rules")),
+			})
+		}
+		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+		r.K10RBAC.Roles = kdl.K10RBACRoles{Count: len(items), Items: items}
 	}
 	if rb.OK() {
-		r.K10RBAC.RoleBindings = kdl.K10RBACRoleBindings{Count: len(rb.Items)}
+		items := make([]kdl.K10RBACRoleBindingsItem, 0, len(rb.Items))
+		for _, o := range rb.Items {
+			roleRef, _ := str(o.Object, "roleRef", "name")
+			binding := kdl.K10RBACRoleBindingsItem{
+				Name:      name(o),
+				Namespace: namespace(o),
+				RoleRef:   roleRef,
+				Subjects:  make([]kdl.K10RBACRoleBindingsItemSubject, 0),
+			}
+			for _, s := range slice(o.Object, "subjects") {
+				sm, ok := s.(map[string]any)
+				if !ok {
+					continue
+				}
+				kind, _ := str(sm, "kind")
+				nm, _ := str(sm, "name")
+				if kind == "" || nm == "" {
+					continue
+				}
+				bound := kdl.K10RBACRoleBindingsItemSubject{Kind: kind, Name: nm}
+				if ns, ok := str(sm, "namespace"); ok {
+					bound.Namespace = &ns
+				}
+				binding.Subjects = append(binding.Subjects, bound)
+			}
+			items = append(items, binding)
+		}
+		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+		r.K10RBAC.RoleBindings = kdl.K10RBACRoleBindings{Count: len(items), Items: items}
 	}
 }
 
@@ -1004,6 +1149,30 @@ func buildHealth(res Result, r *kdl.Report) {
 	if c := res.Get("restorePoints"); c.OK() {
 		r.Health.Backups.RestorePoints = len(c.Items)
 	}
+
+	// The five most recent restores, whatever their state. A restore is an
+	// operator action, so the list answers "who restored what, lately" -- and the
+	// namespace is resolved through the same chain as the failed-actions list, so
+	// one restore does not report two different namespaces in two sections.
+	recent := make([]kdl.HealthBackupsRestoreActionsRecentItem, 0)
+	for _, o := range res.Items("restoreActions") {
+		recent = append(recent, kdl.HealthBackupsRestoreActionsRecentItem{
+			Name:            name(o),
+			Timestamp:       creationTimestamp(o),
+			State:           strOr(o.Object, "Unknown", "status", "state"),
+			TargetNamespace: actionDisplayNamespace(o, "RestoreAction"),
+		})
+	}
+	sort.Slice(recent, func(i, j int) bool {
+		if recent[i].Timestamp != recent[j].Timestamp {
+			return recent[i].Timestamp > recent[j].Timestamp
+		}
+		return recent[i].Name < recent[j].Name
+	})
+	if len(recent) > maxActionListItems {
+		recent = recent[:maxActionListItems]
+	}
+	r.Health.Backups.RestoreActions.Recent = recent
 }
 
 type actionCounts struct{ total, complete, failed, running, other int }
@@ -1065,7 +1234,18 @@ func buildMisc(res Result, r *kdl.Report) {
 		r.Kanister.Blueprints = kdl.KanisterBlueprints{Count: len(items), Items: items}
 	}
 	if c := res.Get("blueprintBindings"); c.OK() {
-		r.Kanister.Bindings.Count = len(c.Items)
+		items := make([]kdl.KanisterBindingsItem, 0, len(c.Items))
+		for _, o := range c.Items {
+			// The binding names the blueprint it applies; a count without it says a
+			// binding exists but not what it binds, which is the whole question.
+			items = append(items, kdl.KanisterBindingsItem{
+				Name:      name(o),
+				Namespace: namespace(o),
+				Blueprint: strOr(o.Object, "", "spec", "blueprint"),
+			})
+		}
+		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+		r.Kanister.Bindings = kdl.KanisterBindings{Count: len(items), Items: items}
 	}
 
 	if c := res.Get("policyPresets"); c.OK() {
@@ -1094,7 +1274,7 @@ func buildMisc(res Result, r *kdl.Report) {
 				freq = *p.Frequency
 			}
 			r.ImportPolicies.Items = append(r.ImportPolicies.Items, kdl.ImportPoliciesItem{
-				Name: p.Name, Frequency: freq,
+				Name: p.Name, Frequency: freq, Profile: importProfile(res, p.Name),
 			})
 		}
 		if !hasAction(p.Actions, "export") {
@@ -1241,6 +1421,37 @@ func buildPolicyAnalysis(res Result, r *kdl.Report) {
 		}
 	}
 
+	// One entry per analysed policy, with what its selector actually resolved to.
+	// It is the section's raw material: every other list here is a subset of it, and
+	// without it a reader cannot see why a policy was called empty.
+	resolved := make([]kdl.PolicyAnalysisResolvedItem, 0)
+	for _, p := range r.Policies.Items {
+		if isSystemPolicy(p.Name) {
+			continue
+		}
+		targeted := p.Selector.TargetPatterns()
+		matched, missing := resolveTargets(p, existing)
+		item := kdl.PolicyAnalysisResolvedItem{
+			Name:                  p.Name,
+			Actions:               p.Actions,
+			Frequency:             p.Frequency,
+			SelectorKind:          selectorKind(p.Selector),
+			Resolvable:            !p.Selector.Unrecognized(),
+			TargetedNamespaces:    matched,
+			NonExistingReferences: missing,
+			TargetedCount:         len(targeted),
+			EffectiveCount:        len(matched),
+			IsEmpty:               len(matched) == 0 && len(targeted) > 0,
+		}
+		if p.Selector.All {
+			// A catch-all targets everything, so "targeted" is not a pattern count.
+			item.TargetedCount = len(matched)
+		}
+		resolved = append(resolved, item)
+	}
+	sort.Slice(resolved, func(i, j int) bool { return resolved[i].Name < resolved[j].Name })
+	r.PolicyAnalysis.Resolved = resolved
+
 	genuine, withCatchall := buildRedundantPairs(r, existing)
 
 	r.PolicyAnalysis.Summary = kdl.PolicyAnalysisSummary{
@@ -1267,6 +1478,45 @@ func buildPolicyAnalysis(res Result, r *kdl.Report) {
 // two *specific* policies overlapping is the actionable finding -- somebody is
 // paying for two snapshots of the same namespace -- so the two counts are kept
 // apart and the report says which is which.
+// resolveTargets returns the existing namespaces a policy selects, and the
+// literal references that match nothing. An unmatched glob is an empty match
+// rather than a typo, so only literals are reported as non-existing.
+func resolveTargets(p kdl.PoliciesItem, existing map[string]bool) (matched, missing []string) {
+	matched, missing = make([]string, 0), make([]string, 0)
+	excluded := p.Selector.ExcludedNamespacePatterns()
+
+	if p.Selector.All {
+		for ns := range existing {
+			if !kdl.GlobAny(excluded, ns) {
+				matched = append(matched, ns)
+			}
+		}
+		sort.Strings(matched)
+		return matched, missing
+	}
+
+	seen := map[string]bool{}
+	for _, pattern := range p.Selector.NamespacePatterns() {
+		hit := false
+		for ns := range existing {
+			if !kdl.GlobMatch(pattern, ns) || kdl.GlobAny(excluded, ns) {
+				continue
+			}
+			hit = true
+			if !seen[ns] {
+				seen[ns] = true
+				matched = append(matched, ns)
+			}
+		}
+		if !hit && !strings.ContainsAny(pattern, "*?") {
+			missing = append(missing, pattern)
+		}
+	}
+	sort.Strings(matched)
+	sort.Strings(missing)
+	return matched, missing
+}
+
 func buildRedundantPairs(r *kdl.Report, existing map[string]bool) (genuine, withCatchall int) {
 	// Resolve each policy to the namespaces it actually selects, once. Doing it
 	// inside the pair loop would be quadratic in namespaces as well as policies.

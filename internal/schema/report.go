@@ -1215,8 +1215,13 @@ type VolumeSnapshotClassesItem struct {
 
 // VolumeSnapshotClassesCSIDriversWithoutVSC mirrors the corresponding object in the KDL report JSON.
 type VolumeSnapshotClassesCSIDriversWithoutVSC struct {
-	Count   int               `json:"count"`
-	Drivers []json.RawMessage `json:"drivers"` // empty array in the source sample - element type unverified
+	Count int `json:"count"`
+	// Drivers are provisioner names, as a flat list of strings -- typed from
+	// KDL.sh's emitter, which builds it with `[.items[] | .provisioner] | unique`.
+	// Both samples come from clusters where every CSI driver has a matching class,
+	// so the list is empty in each, and while it was raw the warning that names the
+	// volumes Kasten cannot snapshot could never render.
+	Drivers []string `json:"drivers"`
 }
 
 // VolumeSnapshotClasses mirrors the corresponding object in the KDL report JSON.

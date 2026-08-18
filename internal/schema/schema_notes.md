@@ -54,6 +54,7 @@ type is a map.**
 | `StuckActionItem`, `OrphanedRestorePointItem`, `ProfileValidationItem.Error` | Typed from the emitter, not from a sample: every available report comes from a healthy cluster, so all three lists are empty in both. While they were `json.RawMessage` they type-checked and were **unrenderable**, which is how three unhealthy-cluster tables silently rendered as a bare count. |
 | `RetentionAnalysisSnapshotRetentionHighItem` | Same story, same fix: `{name, max}` per the emitter. Both samples come from clusters inside the threshold, so the list is empty in each, and the section rendered a count with no way to say which policies. |
 | `PolicyRunStatsLastRunEntry.Duration` → `*int` | `KDL.sh` emits `null` when a run recorded no start or end time. As an `int` that decoded to `0`, which is a run that finished instantly rather than one whose duration is unknown. |
+| `VolumeSnapshotClassesCSIDriversWithoutVSC.Drivers` | A flat `[]string` of provisioner names per the emitter (`[.items[] | .provisioner] | unique`). Both samples come from clusters where every CSI driver has a matching class, so the list is empty in each — and while it was raw, the warning naming the volumes Kasten cannot snapshot could never render. |
 | `LicenseUnparseable` | `{secret, reason}` per the emitter. Both samples come from clusters whose licences all parsed, so the list is empty in each — and while it was raw, a cluster whose licence could not be read showed a parseable count below its secret count with no way to say which secret, or why. |
 | `Catalog.FreeSpacePercent`/`.UsedPercent` → `*int` | `KDL.sh` emits `null` when it could not run `df` in the catalog pod. As `int` that decoded to `0`, and 0% free is the most alarming line the section carries. The Go collector never fills them at all: a pod exec is a create against `pods/exec`, which the read-only Reader has no verb for. |
 | `RansomwareProfileSkippingTLS` | `{name}` per the emitter. Both samples come from clusters that verify TLS, so the list is empty in each — and while it was raw, the pillar could show a 0/5 deduction without ever naming the profile that caused it. |
@@ -65,7 +66,7 @@ conflates the two will report a Kasten 9.0 feature as absent on a 2.1 report.
 
 ## Not verified — needs a report that exercises them
 
-These 5 fields were `null` or an empty list in **both** available samples, so
+These 4 fields were `null` or an empty list in **both** available samples, so
 their type is a guess and they are kept as `json.RawMessage` rather than typed
 wrongly. Each one is a small, isolated task: get a report from a cluster that
 exercises the field, look at the value, replace the type.
@@ -75,7 +76,6 @@ exercises the field, look at the value, replace the type.
 | `PolicyPresetsItem` | `frequency` |
 | `PolicyPresetsItem` | `retention` |
 | `PolicyAnalysis` | `unresolvablePolicies` |
-| `VolumeSnapshotClassesCSIDriversWithoutVSC` | `drivers` |
 | `ProfilesItem` | `protectionPeriod` |
 
 **`json.RawMessage` is not a free pass.** A field left raw type-checks but cannot

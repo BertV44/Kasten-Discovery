@@ -505,6 +505,9 @@ func bestPracticesAnyAssessed(r *kdl.Report) bool {
 		bp.SnapshotRetentionHigh, bp.SnapshotRetentionZero,
 		bp.ExportRetentionExplicit, bp.ClusterScopedResources,
 		bp.PoliciesWithoutExport,
+		// The 16th check. The renderer counts it among the sixteen, so leaving it
+		// out here let a section where it was the only real verdict be declared.
+		bp.VMSnapshotConsistency,
 	} {
 		// N/A does not count. It is a real answer on its own -- the check does not
 		// apply to this cluster -- but a section whose only non-unknown entries are

@@ -759,7 +759,7 @@ func TestEveryCollectedTargetFeedsTheReport(t *testing.T) {
 		"k10NetworkPolicies": true, "mutatingWebhooks": true, "mcClusters": true,
 		"helmRelease": true, "pvcs": true, "volumeSnapshots": true,
 		"reportActions": true, "k10Reports": true, "nodes": true,
-		"licenseSecrets": true,
+		"licenseSecrets": true, "kubeVirts": true,
 	}
 	for _, tg := range targets(Options{KastenNamespace: "kasten-io"}) {
 		if !consumed[tg.key] {

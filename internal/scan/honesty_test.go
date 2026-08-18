@@ -214,3 +214,120 @@ func renderFor(t *testing.T, r *kdl.Report) string {
 	}
 	return sb.String()
 }
+
+// TestSubFieldsWithConsumersAreActuallyFilled: nine sub-fields had a renderer
+// reading them and no builder writing them, so the page showed a count with no
+// table, a "VMs at a time" row with no number, and a Restore History that was
+// always empty. A section counted as populated while the rows a reader came for
+// were missing.
+func TestSubFieldsWithConsumersAreActuallyFilled(t *testing.T) {
+	restore := func(name, appNS, state, created string) unstructured.Unstructured {
+		return action("RestoreAction", name, appNS, "", state, created, nil)
+	}
+	r := buildAt(t, map[string][]unstructured.Unstructured{
+		"namespaces": {obj("Namespace", "app-a", nil)},
+		"policies": {policy("import-from-s3", map[string]any{
+			"frequency": "@daily",
+			"actions": []any{map[string]any{
+				"action":           "import",
+				"importParameters": map[string]any{"profile": map[string]any{"name": "s3-source"}},
+			}},
+		})},
+		"restoreactions": {
+			restore("r-old", "app-a", stateComplete, ago(48*time.Hour)),
+			restore("r-new", "app-a", stateFailed, ago(time.Hour)),
+		},
+		"storageclasses": {
+			obj("StorageClass", "fast", map[string]any{"provisioner": "ebs.csi.aws.com"}),
+			obj("StorageClass", "legacy", map[string]any{"provisioner": "kubernetes.io/aws-ebs"}),
+		},
+		"volumesnapshotclasses": {
+			obj("VolumeSnapshotClass", "csi-snap", map[string]any{"driver": "efs.csi.aws.com"}),
+		},
+		"blueprintbindings": {unstructured.Unstructured{Object: map[string]any{
+			"metadata": map[string]any{"name": "pg-binding", "namespace": "kasten-io"},
+			"spec":     map[string]any{"blueprint": "postgres-bp"},
+		}}},
+		"kubevirts": {unstructured.Unstructured{Object: map[string]any{
+			"metadata": map[string]any{"name": "kubevirt", "namespace": "kubevirt"},
+			"status":   map[string]any{"observedKubeVirtVersion": "v1.2.2"},
+		}}},
+		"virtualmachines": {unstructured.Unstructured{Object: map[string]any{
+			"metadata": map[string]any{"name": "vm-1", "namespace": "app-a"},
+			"status":   map[string]any{"printableStatus": "Running"},
+		}}},
+		"secrets": {helmRelease("v1", map[string]any{
+			"limiter": map[string]any{"vmSnapshotsPerCluster": float64(4)},
+		})},
+	})
+
+	if got := r.Health.Backups.RestoreActions.Recent; len(got) != 2 || got[0].Name != "r-new" {
+		t.Errorf("recent restores = %+v, want both, newest first", got)
+	} else if got[0].TargetNamespace != "app-a" {
+		t.Errorf("recent restore namespace = %q, want app-a, resolved as in the failed list",
+			got[0].TargetNamespace)
+	}
+
+	// ebs.csi.aws.com is a CSI provisioner with no matching snapshot class; the
+	// in-tree one must not be reported, since it never uses CSI snapshots.
+	missing := r.VolumeSnapshotClasses.CSIDriversWithoutVSC
+	if missing.Count != 1 || len(missing.Drivers) != 1 || missing.Drivers[0] != "ebs.csi.aws.com" {
+		t.Errorf("csiDriversWithoutVsc = %+v, want just ebs.csi.aws.com", missing)
+	}
+
+	if len(r.ImportPolicies.Items) != 1 || r.ImportPolicies.Items[0].Profile != "s3-source" {
+		t.Errorf("import policy = %+v, want its profile resolved", r.ImportPolicies.Items)
+	}
+	if len(r.Kanister.Bindings.Items) != 1 || r.Kanister.Bindings.Items[0].Blueprint != "postgres-bp" {
+		t.Errorf("kanister bindings = %+v, want the blueprint each one binds", r.Kanister.Bindings.Items)
+	}
+	if r.Virtualization.Version != "v1.2.2" {
+		t.Errorf("virtualization version = %q, want v1.2.2 from the KubeVirt CR", r.Virtualization.Version)
+	}
+	if r.Virtualization.SnapshotConcurrency != "4" {
+		t.Errorf("snapshotConcurrency = %q, want 4 from the limiter", r.Virtualization.SnapshotConcurrency)
+	}
+	if r.Virtualization.FreezeConfiguration.Timeout == "" {
+		t.Error("freeze timeout is empty; the row renders with no value")
+	}
+	if len(r.PolicyAnalysis.Resolved) != 1 {
+		t.Fatalf("policyAnalysis.resolved = %+v, want one entry per analysed policy",
+			r.PolicyAnalysis.Resolved)
+	}
+}
+
+// TestRBACInventoryListsAndNotJustCounts: an audit needs to know who has access
+// through which role. Three of the four lists reported a count with no rows.
+func TestRBACInventoryListsAndNotJustCounts(t *testing.T) {
+	r := buildAt(t, map[string][]unstructured.Unstructured{
+		"clusterrolebindings": {unstructured.Unstructured{Object: map[string]any{
+			"metadata": map[string]any{"name": "k10-admin"},
+			"roleRef":  map[string]any{"name": "k10-admin-role"},
+			"subjects": []any{map[string]any{"kind": "User", "name": "alice@example.com"}},
+		}}},
+		"roles": {unstructured.Unstructured{Object: map[string]any{
+			"metadata": map[string]any{"name": "k10-ns-role", "namespace": "kasten-io"},
+			"rules":    []any{map[string]any{"verbs": []any{"get"}}},
+		}}},
+		"rolebindings": {unstructured.Unstructured{Object: map[string]any{
+			"metadata": map[string]any{"name": "k10-ns-binding", "namespace": "kasten-io"},
+			"roleRef":  map[string]any{"name": "k10-ns-role"},
+			"subjects": []any{map[string]any{"kind": "ServiceAccount", "name": "k10-sa"}},
+		}}},
+	})
+
+	crb := r.K10RBAC.ClusterRoleBindings
+	if crb.Count != 1 || len(crb.Items) != 1 {
+		t.Fatalf("clusterRoleBindings = %+v, want one entry, not just a count", crb)
+	}
+	if crb.Items[0].RoleRef != "k10-admin-role" || len(crb.Items[0].Subjects) != 1 {
+		t.Errorf("binding = %+v, want its roleRef and subject", crb.Items[0])
+	}
+	if len(r.K10RBAC.Roles.Items) != 1 || r.K10RBAC.Roles.Items[0].RulesCount != 1 {
+		t.Errorf("roles = %+v, want the rule count per role", r.K10RBAC.Roles.Items)
+	}
+	if len(r.K10RBAC.RoleBindings.Items) != 1 ||
+		r.K10RBAC.RoleBindings.Items[0].RoleRef != "k10-ns-role" {
+		t.Errorf("roleBindings = %+v, want each binding's roleRef", r.K10RBAC.RoleBindings.Items)
+	}
+}
