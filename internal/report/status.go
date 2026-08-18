@@ -60,6 +60,14 @@ var statusTable = map[string]statusMeta{
 	"NOT_CONFIGURED":        {PolarityBad, "✗"},
 	"NOT_ENABLED":           {PolarityBad, "✗"},
 	"GAPS_DETECTED":         {PolarityBad, "✗"},
+	// Two more values KDL.sh emits that no available sample carries, found by
+	// reading the emitter rather than by the guard firing on a report: NOT_USED
+	// on a cluster with no policy presets, and CONFIGURED_NOT_HEALTHY from the DR
+	// verdict, which the best-practice check carries verbatim. Both were
+	// rendering as "? …" in amber -- so an unhealthy DR, a critical check, was
+	// painted as an unrecognised value rather than as the failure it is.
+	"NOT_USED":               {PolarityBad, "✗"},
+	"CONFIGURED_NOT_HEALTHY": {PolarityBad, "✗"},
 
 	// Licence status values. Found by the unknown-status guard firing on a real
 	// report: VALID was rendering as "? VALID" because only bestPractices values

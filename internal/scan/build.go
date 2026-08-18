@@ -38,6 +38,7 @@ func Build(res Result) *kdl.Report {
 	buildProfiles(res, r)
 	buildNamespaces(res, r)
 	buildVirtualization(res, r)
+	buildVMProtection(res, r)
 	buildStorage(res, r)
 	buildK10Resources(res, r)
 	buildRBACInventory(res, r)
@@ -67,9 +68,9 @@ func Build(res Result) *kdl.Report {
 	buildUnprotectedBreakdown(r, cfg)
 	buildNonDefaultSettings(r)
 	r.CollectionFlags.SkipHelm = res.SkipHelm
+	buildVMRestorePointConsistency(res, r)
 	buildRestorePointsByNamespace(res, r)
 	buildOrphanedRestorePoints(res, r)
-	markUnassessedChecks(r)
 
 	// Declared in the report itself, not only on stderr. A consumer that cannot
 	// tell "not computed" from "computed and empty" reads every uncollected
@@ -83,42 +84,29 @@ func Build(res Result) *kdl.Report {
 	if !cfg.usable() {
 		alsoUnpopulated = append(alsoUnpopulated, "k10Configuration")
 	}
+
+	// The verdicts run last, and they read the report rather than the collection:
+	// every check asks whether the section it grades was populated, which means
+	// the declarations above have to be in place first.
 	r.UnpopulatedSections = unpopulatedFor(res, alsoUnpopulated)
+	buildBestPractices(res, r)
+	buildRansomwareReadiness(res, r)
+
+	// Both verdict sections stay published with individual checks marked
+	// NOT_ASSESSED -- that status is legible on the page and counted apart from
+	// passes and failures. What cannot survive a missing input is the ransomware
+	// *grade*: it is one number, and there is no room in it for "partly
+	// unknown", so a pillar scored zero for lack of evidence would read as a
+	// failed control. bestPractices is declared only when nothing in it was
+	// assessed, so kdl diff stops comparing a set of unknowns.
+	if !ransomwarePillarInputs(res, r) {
+		r.UnpopulatedSections = append(r.UnpopulatedSections, "ransomwareReadiness")
+	}
+	if !bestPracticesFullyAssessed(r) {
+		r.UnpopulatedSections = append(r.UnpopulatedSections, "bestPractices")
+	}
 
 	return r
-}
-
-// markUnassessedChecks writes NOT_ASSESSED into every best-practice check this
-// collector does not compute.
-//
-// Leaving them empty is not neutral: the renderer reads an empty value as a
-// status it does not recognise, which fails the check, which paints the two
-// critical checks "✗ CRITICAL" and the report's verdict banner "2 Critical" --
-// on a cluster where nobody looked at either. Emitting the word KDL itself uses
-// for an unread value makes the renderer show them as not assessed instead.
-//
-// This is lesson four in both directions at once: an unassessed check must not
-// be reported as failing, and must not be reported as passing either.
-func markUnassessedChecks(r *kdl.Report) {
-	bp := &r.BestPractices
-	for _, field := range []*string{
-		&bp.DisasterRecovery, &bp.Immutability, &bp.PolicyPresets, &bp.Monitoring,
-		&bp.ResourceLimits, &bp.NamespaceProtection, &bp.VMProtection,
-		&bp.Authentication, &bp.Encryption, &bp.AuditLogging,
-		&bp.SnapshotRetentionHigh, &bp.SnapshotRetentionZero,
-		&bp.ExportRetentionExplicit, &bp.ClusterScopedResources,
-		&bp.PoliciesWithoutExport,
-	} {
-		if *field == "" {
-			*field = kdl.StatusNotAssessed
-		}
-	}
-	// The licence section is not collected at all, which unpopulatedSections
-	// already declares. Marking node consumption "not assessed" here as well
-	// made the report say "node listing denied by RBAC" -- and nothing was
-	// denied: the node read is not attempted. Telling a customer RBAC blocked
-	// something the tool never asked for is its own false claim, so the licence
-	// section is left to the declaration and not annotated here.
 }
 
 // UnpopulatedSections names the report sections this collector does not yet
@@ -127,8 +115,7 @@ func markUnassessedChecks(r *kdl.Report) {
 // empty sections are "nothing found" and which are "not implemented".
 func UnpopulatedSections() []string {
 	return []string{
-		"ransomwareReadiness", "bestPractices", "dataUsage",
-		"catalog", "license",
+		"dataUsage", "catalog", "license",
 		// policyAnalysis IS computed, but only partly: redundancy is not. Naming
 		// the sub-path keeps the rest of the section comparable while stopping a
 		// structural zero from reading as "21 redundant pairs resolved".
@@ -178,6 +165,9 @@ var sectionInputs = map[string][]string{
 	// Missing one makes a real coverage gap look like a decision somebody made.
 	"coverage.unprotectedBreakdown":     {"policies", "namespaces", "k10ConfigMaps"},
 	"k10Configuration.policyExclusions": {"policies", "namespaces"},
+	// virtualization.protection resolves policies against VMs; without either
+	// listing, "0 protected VMs" would be reported for every VM on the cluster.
+	"virtualization": {"policies", "virtualMachines"},
 }
 
 // unpopulatedFor is the list declared in one report: the sections this build

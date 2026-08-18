@@ -990,10 +990,21 @@ type RansomwareReadinessPillarsNetworkPolicies struct {
 
 // RansomwareReadinessPillarsTLSVerification mirrors the corresponding object in the KDL report JSON.
 type RansomwareReadinessPillarsTLSVerification struct {
-	Score               int               `json:"score"`
-	Max                 int               `json:"max"`
-	Evidence            bool              `json:"evidence"`
-	ProfilesSkippingTLS []json.RawMessage `json:"profilesSkippingTls"` // empty array in the source sample - element type unverified
+	Score    int  `json:"score"`
+	Max      int  `json:"max"`
+	Evidence bool `json:"evidence"`
+	// ProfilesSkippingTLS names the profiles that skip certificate verification.
+	// Typed from KDL.sh's emitter -- one object with a name -- because both
+	// samples come from clusters that verify TLS, so the list is empty in each,
+	// and while it was raw the pillar could show the deduction without ever
+	// naming the profile that caused it.
+	ProfilesSkippingTLS []RansomwareProfileSkippingTLS `json:"profilesSkippingTls"`
+}
+
+// RansomwareProfileSkippingTLS is one location profile with certificate
+// verification disabled.
+type RansomwareProfileSkippingTLS struct {
+	Name string `json:"name"`
 }
 
 // RansomwareReadinessPillars mirrors the corresponding object in the KDL report JSON.
