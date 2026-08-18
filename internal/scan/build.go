@@ -54,6 +54,8 @@ func Build(res Result) *kdl.Report {
 	buildNamespaceProtection(res, r, now)
 	buildPolicyRunStats(res, r, now)
 	buildRetentionAnalysis(r)
+	buildDisasterRecovery(res, r, now)
+	buildMonitoring(res, r)
 	buildRestorePointsByNamespace(res, r)
 	buildOrphanedRestorePoints(res, r)
 	markUnassessedChecks(r)
@@ -106,8 +108,7 @@ func markUnassessedChecks(r *kdl.Report) {
 func UnpopulatedSections() []string {
 	return []string{
 		"ransomwareReadiness", "bestPractices", "dataUsage",
-		"k10Configuration", "disasterRecovery",
-		"catalog", "multiCluster", "monitoring", "license",
+		"k10Configuration", "catalog", "multiCluster", "license",
 		// policyAnalysis IS computed, but only partly: redundancy is not. Naming
 		// the sub-path keeps the rest of the section comparable while stopping a
 		// structural zero from reading as "21 redundant pairs resolved".
@@ -143,6 +144,11 @@ var sectionInputs = map[string][]string{
 	"policyRunStats.lastRuns":        {"policies", "runActions"},
 	"policyRunStats.averageDuration": {"runActions"},
 	"policyRunStats.effectiveRpo":    {"policies", "runActions"},
+	// The DR verdict is derived from the DR policy's run history, so a report
+	// that could not read either would otherwise announce NOT_ENABLED or
+	// CONFIGURED_NOT_HEALTHY on a healthy install.
+	"disasterRecovery": {"policies", "runActions"},
+	"monitoring":       {"k10Pods"},
 }
 
 // unpopulatedFor is the list declared in one report: the sections this build
