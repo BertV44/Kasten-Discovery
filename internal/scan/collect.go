@@ -47,6 +47,9 @@ type Result struct {
 	// time.Now() at render time, so the same Result always builds the same
 	// report and a test can state what "now" is.
 	CollectedAt time.Time
+	// SkipHelm records that the Helm release read was not attempted, which is
+	// different from it having failed and is reported as such.
+	SkipHelm bool
 }
 
 // Now is the instant ages are measured from, falling back to the current time
@@ -103,18 +106,20 @@ func (r Result) TotalFailure() bool {
 // Collect fetches every target concurrently, capturing each failure against its
 // own resource instead of failing the whole scan. One denied read must not cost
 // the other thirty-odd sections.
-func Collect(ctx context.Context, r Reader, kastenNS string, parallelism int) Result {
-	all := targets(kastenNS)
+func Collect(ctx context.Context, r Reader, opts Options) Result {
+	all := targets(opts)
 	res := Result{
 		Collections:     make(map[string]Collection, len(all)),
-		KastenNamespace: kastenNS,
+		KastenNamespace: opts.KastenNamespace,
 		CollectedAt:     time.Now(),
+		SkipHelm:        opts.SkipHelm,
 	}
 
 	if v, err := r.ServerVersion(); err == nil {
 		res.KubernetesVersion = v
 	}
 
+	parallelism := opts.Parallelism
 	if parallelism < 1 {
 		parallelism = 1
 	}
@@ -131,7 +136,7 @@ func Collect(ctx context.Context, r Reader, kastenNS string, parallelism int) Re
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			c := fetch(ctx, r, t, kastenNS)
+			c := fetch(ctx, r, t, opts.KastenNamespace)
 
 			mu.Lock()
 			res.Collections[t.key] = c
@@ -169,7 +174,7 @@ func fetch(ctx context.Context, r Reader, t target, kastenNS string) Collection 
 		ns = kastenNS
 	}
 
-	list, err := r.List(ctx, t.gvr, ns)
+	list, err := r.List(ctx, t.gvr, ns, t.labelSelector)
 	switch {
 	case err == nil:
 		c.Items = list.Items

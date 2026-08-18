@@ -399,7 +399,7 @@ func TestOpenShiftDetectedFromServedAPIs(t *testing.T) {
 // not an unknown.
 func TestPlainKubernetesIsDetected(t *testing.T) {
 	f := &fakeReader{served: map[string]bool{}}
-	for _, tg := range targets("kasten-io") {
+	for _, tg := range targets(Options{KastenNamespace: "kasten-io"}) {
 		f.served[tg.gvr.Resource] = true
 	}
 	f.served["securitycontextconstraints"] = false
@@ -699,8 +699,11 @@ func TestEveryCollectedTargetFeedsTheReport(t *testing.T) {
 		"restoreActions": true, "restorePoints": true, "clusterRoles": true,
 		"clusterRoleBindings": true, "roles": true, "roleBindings": true,
 		"routes": true, "scc": true, "virtualMachines": true,
+		"k10ConfigMaps": true, "k10Services": true, "k10Ingresses": true,
+		"k10NetworkPolicies": true, "mutatingWebhooks": true, "mcClusters": true,
+		"helmRelease": true,
 	}
-	for _, tg := range targets("kasten-io") {
+	for _, tg := range targets(Options{KastenNamespace: "kasten-io"}) {
 		if !consumed[tg.key] {
 			t.Errorf("target %q is collected but no section reads it; drop it or wire it up", tg.key)
 		}

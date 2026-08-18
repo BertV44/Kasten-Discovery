@@ -358,7 +358,7 @@ func TestDeniedActionReadIsDeclaredNotEmpty(t *testing.T) {
 // would make the section permanently undiffable on such a cluster.
 func TestAbsentResourceIsNotDeclaredUnpopulated(t *testing.T) {
 	served := map[string]bool{}
-	for _, tg := range targets("kasten-io") {
+	for _, tg := range targets(Options{KastenNamespace: "kasten-io"}) {
 		served[tg.gvr.Resource] = true
 	}
 	served["restorepoints"] = false

@@ -63,10 +63,15 @@ func multiClusterSection(r *schema.Report) Section {
 	return Section{
 		Title:     "🌐 Multi-Cluster Configuration",
 		CardClass: "mc-card",
-		Rows: []Row{
+		Rows: nonEmptyRows([]Row{
 			badgeRow("Role", class, strings.ToUpper(mc.Role)),
 			row("Managed Clusters", itoa(mc.ClusterCount)),
-		},
+			// Only a secondary carries these, and on a secondary they are the
+			// section's whole point: they name the cluster whose policies this
+			// one is executing. Both went unrendered while untyped.
+			row("Primary Cluster", deref(mc.PrimaryName, "")),
+			row("Cluster ID", deref(mc.ClusterID, "")),
+		}),
 	}
 }
 
@@ -808,6 +813,12 @@ func k10ConfigurationSection(r *schema.Report) Section {
 		encryption = "None"
 	}
 
+	// The KMS provider on its own does not say which key: "AWS KMS" is the same
+	// string whether a CMK is configured or the details were never read.
+	if d := deref(sec.Encryption.Details, ""); d != "" {
+		encryption += " (" + d + ")"
+	}
+
 	security := []Row{
 		// Details is provenance ("detected from secret"), not part of the method.
 		row("Authentication", sec.Authentication.Method),
@@ -815,8 +826,13 @@ func k10ConfigurationSection(r *schema.Report) Section {
 		yesNoRow("FIPS Mode", sec.FIPSMode, true),
 		yesNoRow("Network Policies", sec.NetworkPolicies, true),
 		yesNoRow("Audit Logging", sec.AuditLogging.Enabled, true),
+		// Where the audit trail goes is the operational half of "audit logging is
+		// on": a trail written to stdout on a cluster with no log shipping does
+		// not survive the incident it exists for.
+		row("Audit Targets", deref(sec.AuditLogging.Targets, "")),
 		yesNoRow("SCC", sec.Scc, true),
 		yesNoRow("VAP", sec.Vap, true),
+		row("Custom CA Certificate", deref(sec.CustomCACertificate, "")),
 		row("Security Context (runAsUser)", sec.SecurityContext.RunAsUser),
 		row("Security Context (fsGroup)", sec.SecurityContext.FsGroup),
 	}
@@ -869,6 +885,7 @@ func k10ConfigurationSection(r *schema.Report) Section {
 		row("Jobs", pe.JobsSize),
 		row("Logging", pe.LoggingSize),
 		row("Metering", pe.MeteringSize),
+		row("Storage Class", deref(pe.StorageClass, "cluster default")),
 	}
 
 	gc := c.GarbageCollector
@@ -879,6 +896,15 @@ func k10ConfigurationSection(r *schema.Report) Section {
 		row("Log Level", c.LogLevel),
 		row("Dashboard Access", c.DashboardAccess.Method),
 		row("Dashboard Host", c.DashboardAccess.Host),
+		row("Cluster Name", deref(c.ClusterName, "")),
+	}
+
+	// Which settings somebody chose, as opposed to which ones K10 defaulted. It
+	// is the one line that makes the four tables above readable at a glance, and
+	// it went unrendered while the field was untyped.
+	if nd := c.NonDefaultSettings; nd.Count > 0 {
+		other = append(other, row("Tuned Settings",
+			fmt.Sprintf("%d (%s)", nd.Count, deref(nd.Items, ""))))
 	}
 
 	s := Section{

@@ -62,6 +62,7 @@ func Run(args []string) error {
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall time budget for the collection")
 	parallelism := fs.Int("parallelism", 8, "how many resources to fetch concurrently")
 	qps := fs.Float64("qps", 20, "client-side API request rate limit")
+	noHelm := fs.Bool("no-helm", false, "do not read the Helm release object (K10 settings then come from the k10-config ConfigMap only)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `kdl scan -- collect a discovery report from a cluster (read-only)
 
@@ -76,6 +77,8 @@ Flags:
   -timeout duration  overall time budget (default: 2m)
   -parallelism n     concurrent resource fetches (default: 8)
   -qps n             client-side request rate limit (default: 20)
+  -no-helm           skip the Helm release read; settings come from the
+                     k10-config ConfigMap only, and the report says so
 
 This command never writes to the cluster.
 `)
@@ -98,7 +101,11 @@ This command never writes to the cluster.
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	res := Collect(ctx, reader, *kastenNS, *parallelism)
+	res := Collect(ctx, reader, Options{
+		KastenNamespace: *kastenNS,
+		Parallelism:     *parallelism,
+		SkipHelm:        *noHelm,
+	})
 
 	// A report in which every section is zero because the cluster was never
 	// reached is worse than no report: it looks like a cluster with nothing in

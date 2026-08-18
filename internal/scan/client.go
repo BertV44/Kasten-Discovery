@@ -27,7 +27,12 @@ import (
 // again if any file in the package names one.
 type Reader interface {
 	// List returns every object of a resource, cluster-wide when namespace is "".
-	List(ctx context.Context, gvr k8sschema.GroupVersionResource, namespace string) (*unstructured.UnstructuredList, error)
+	//
+	// labelSelector narrows the read server-side. It exists for one read that
+	// must not be done broadly: the Helm release object is found by label, and
+	// listing the namespace's Secrets to search for it client-side would pull
+	// every secret in the Kasten namespace across the wire to use one.
+	List(ctx context.Context, gvr k8sschema.GroupVersionResource, namespace, labelSelector string) (*unstructured.UnstructuredList, error)
 	// Get returns one named object.
 	Get(ctx context.Context, gvr k8sschema.GroupVersionResource, namespace, name string) (*unstructured.Unstructured, error)
 	// ServerVersion reports the Kubernetes version, for the report header.
@@ -103,12 +108,13 @@ func restConfig(kubeconfigPath, contextName string) (*rest.Config, error) {
 	return nil, fmt.Errorf("no usable kubeconfig and not running in-cluster: %w", err)
 }
 
-func (c *clusterReader) List(ctx context.Context, gvr k8sschema.GroupVersionResource, namespace string) (*unstructured.UnstructuredList, error) {
+func (c *clusterReader) List(ctx context.Context, gvr k8sschema.GroupVersionResource, namespace, labelSelector string) (*unstructured.UnstructuredList, error) {
+	opts := metav1.ListOptions{LabelSelector: labelSelector}
 	ri := c.dyn.Resource(gvr)
 	if namespace != "" {
-		return ri.Namespace(namespace).List(ctx, metav1.ListOptions{})
+		return ri.Namespace(namespace).List(ctx, opts)
 	}
-	return ri.List(ctx, metav1.ListOptions{})
+	return ri.List(ctx, opts)
 }
 
 func (c *clusterReader) Get(ctx context.Context, gvr k8sschema.GroupVersionResource, namespace, name string) (*unstructured.Unstructured, error) {

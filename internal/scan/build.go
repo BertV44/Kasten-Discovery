@@ -56,6 +56,17 @@ func Build(res Result) *kdl.Report {
 	buildRetentionAnalysis(r)
 	buildDisasterRecovery(res, r, now)
 	buildMonitoring(res, r)
+	buildMultiCluster(res, r)
+
+	// K10's own configuration, and the two sections that need it: the deliberate
+	// exclusions are read from the policies, but subtracting them from the
+	// unprotected count needs the excludedApps list the config carries.
+	cfg := loadInstallConfig(res, res.SkipHelm)
+	buildK10Configuration(res, r, cfg)
+	buildPolicyExclusions(res, r)
+	buildUnprotectedBreakdown(r, cfg)
+	buildNonDefaultSettings(r)
+	r.CollectionFlags.SkipHelm = res.SkipHelm
 	buildRestorePointsByNamespace(res, r)
 	buildOrphanedRestorePoints(res, r)
 	markUnassessedChecks(r)
@@ -63,7 +74,16 @@ func Build(res Result) *kdl.Report {
 	// Declared in the report itself, not only on stderr. A consumer that cannot
 	// tell "not computed" from "computed and empty" reads every uncollected
 	// section as a cluster with nothing in it.
-	r.UnpopulatedSections = unpopulatedFor(res)
+	//
+	// k10Configuration is declared here rather than from the input table,
+	// because whether it was computed is not a property of one read: -no-helm is
+	// a deliberate skip rather than a failure, and the ConfigMap fallback can
+	// still answer. What matters is whether either source produced anything.
+	var alsoUnpopulated []string
+	if !cfg.usable() {
+		alsoUnpopulated = append(alsoUnpopulated, "k10Configuration")
+	}
+	r.UnpopulatedSections = unpopulatedFor(res, alsoUnpopulated)
 
 	return r
 }
@@ -108,7 +128,7 @@ func markUnassessedChecks(r *kdl.Report) {
 func UnpopulatedSections() []string {
 	return []string{
 		"ransomwareReadiness", "bestPractices", "dataUsage",
-		"k10Configuration", "catalog", "multiCluster", "license",
+		"catalog", "license",
 		// policyAnalysis IS computed, but only partly: redundancy is not. Naming
 		// the sub-path keeps the rest of the section comparable while stopping a
 		// structural zero from reading as "21 redundant pairs resolved".
@@ -149,15 +169,24 @@ var sectionInputs = map[string][]string{
 	// CONFIGURED_NOT_HEALTHY on a healthy install.
 	"disasterRecovery": {"policies", "runActions"},
 	"monitoring":       {"k10Pods"},
+	// The role decides which of the other two fields is even meaningful, and it
+	// is read from the namespace listing and the join ConfigMap. mcClusters is
+	// required as well: on a primary whose cluster records could not be read,
+	// clusterCount zero would say no cluster has joined.
+	"multiCluster": {"namespaces", "k10ConfigMaps", "mcClusters"},
+	// The deliberate-exclusion split is only trustworthy with all three inputs.
+	// Missing one makes a real coverage gap look like a decision somebody made.
+	"coverage.unprotectedBreakdown":     {"policies", "namespaces", "k10ConfigMaps"},
+	"k10Configuration.policyExclusions": {"policies", "namespaces"},
 }
 
 // unpopulatedFor is the list declared in one report: the sections this build
 // cannot compute at all, plus the ones it can but whose input this run did not
 // return.
-func unpopulatedFor(res Result) []string {
+func unpopulatedFor(res Result, declared []string) []string {
 	out := UnpopulatedSections()
 
-	var degraded []string
+	degraded := append([]string(nil), declared...)
 	for section, inputs := range sectionInputs {
 		for _, key := range inputs {
 			if c, present := res.Collections[key]; !present || (!c.OK() && !c.Absent) {

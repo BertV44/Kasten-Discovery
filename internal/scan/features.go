@@ -188,3 +188,57 @@ func buildMonitoring(res Result, r *kdl.Report) {
 		}
 	}
 }
+
+// mcNamespace is the namespace a multi-cluster primary keeps its joined-cluster
+// records in, and its existence is what makes a cluster a primary.
+const mcNamespace = "kasten-io-mc"
+
+// mcJoinConfigMap is what a secondary carries instead: the record of which
+// primary it answers to.
+const mcJoinConfigMap = "mc-join-config"
+
+// buildMultiCluster reports this cluster's place in a multi-cluster setup.
+//
+// It matters to every other section: on a secondary, policies and profiles are
+// pushed from the primary, so a finding about a policy nobody here created is
+// not something an operator on this cluster can act on.
+func buildMultiCluster(res Result, r *kdl.Report) {
+	for _, ns := range r.Coverage.NamespacesInventory.Items {
+		if ns.Name != mcNamespace {
+			continue
+		}
+		r.MultiCluster.Role = "primary"
+		// Counted from the cluster records themselves. An absent CRD leaves this
+		// at zero, which on a primary means the records could not be read rather
+		// than that no cluster has joined -- mcClusters is named in
+		// sectionInputs for exactly that reason.
+		r.MultiCluster.ClusterCount = len(res.Items("mcClusters"))
+		return
+	}
+
+	for _, cm := range res.Items("k10ConfigMaps") {
+		if name(cm) != mcJoinConfigMap {
+			continue
+		}
+		r.MultiCluster.Role = "secondary"
+		data := mapAt(cm.Object, "data")
+		// Both spellings are in the field: the key changed between releases and
+		// reading only one reports a joined secondary as having no primary.
+		r.MultiCluster.PrimaryName = optional(firstNonEmpty(data, "primaryClusterName", "primary"))
+		r.MultiCluster.ClusterID = optional(firstNonEmpty(data, "clusterId", "clusterID"))
+		return
+	}
+
+	r.MultiCluster.Role = "none"
+}
+
+// firstNonEmpty returns the first key that carries a value, for fields whose
+// name changed between Kasten releases.
+func firstNonEmpty(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
