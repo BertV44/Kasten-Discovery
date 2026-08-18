@@ -112,7 +112,7 @@ func buildBestPractices(res Result, r *kdl.Report) {
 	}
 
 	bp.VMProtection = vmProtectionStatus(res, r)
-	bp.VMSnapshotConsistency = vmConsistencyStatus(r)
+	bp.VMSnapshotConsistency = vmConsistencyStatus(res, r)
 
 	if c := res.Get("policyPresets"); !c.OK() && !c.Absent {
 		bp.PolicyPresets = kdl.StatusNotAssessed
@@ -213,11 +213,14 @@ func actionableGaps(r *kdl.Report) int {
 // VMs -- an inapplicable check must not read as a passed one either.
 func vmProtectionStatus(res Result, r *kdl.Report) string {
 	c := res.Get("virtualMachines")
+	// Order matters here. A denied VM listing also leaves totalVMs at zero, and
+	// answering N/A first would report "no VMs on this cluster" -- a claim about
+	// virtualization -- from a read that was refused.
+	if (!c.OK() && !c.Absent) || !res.Get("policies").OK() {
+		return kdl.StatusNotAssessed
+	}
 	if c.Absent || r.Virtualization.TotalVMs == 0 {
 		return statusNA
-	}
-	if !c.OK() || !res.Get("policies").OK() {
-		return kdl.StatusNotAssessed
 	}
 	p := r.Virtualization.Protection
 	switch {
@@ -233,7 +236,12 @@ func vmProtectionStatus(res Result, r *kdl.Report) string {
 // vmConsistencyStatus flags crash-consistent VM restore points. Kasten falls
 // back to a crash-consistent snapshot silently when the guest freeze is
 // unavailable, so nothing else in the report mentions it.
-func vmConsistencyStatus(r *kdl.Report) string {
+func vmConsistencyStatus(res Result, r *kdl.Report) string {
+	// Same trap as vmProtectionStatus: the consistency counts are absent both
+	// when there are no VM restore points and when the restore-point read failed.
+	if c := res.Get("restorePoints"); !c.OK() && !c.Absent && r.Virtualization.TotalVMs > 0 {
+		return kdl.StatusNotAssessed
+	}
 	vc := r.Virtualization.VMRestorePointConsistency
 	if vc == nil || vc.Total == 0 {
 		return statusNA
@@ -458,11 +466,18 @@ func ransomwarePillarInputs(res Result, r *kdl.Report) bool {
 	return true
 }
 
-// bestPracticesFullyAssessed reports whether every check got a real verdict. The
-// section stays published either way -- an individual NOT_ASSESSED check is
-// legible on the page and in the counts, which is exactly what that status is
-// for -- so this only decides whether kdl diff should compare the set.
-func bestPracticesFullyAssessed(r *kdl.Report) bool {
+// bestPracticesAnyAssessed reports whether at least one check got a real verdict.
+//
+// The threshold is "any", not "all", and the difference matters. kdl diff already
+// skips an individual NOT_ASSESSED check -- it has to, or a customer who ran with
+// full RBAC in Q1 and restricted RBAC in Q2 would get regressions that are purely
+// a permissions change -- so a partly-assessed section carries no false-regression
+// risk. Declaring the whole section because three of sixteen checks could not be
+// evaluated would blank thirteen real verdicts out of the page to no purpose.
+//
+// The section is therefore declared only when nothing in it was assessed at all,
+// which is the case where its contents say nothing about the cluster.
+func bestPracticesAnyAssessed(r *kdl.Report) bool {
 	bp := r.BestPractices
 	for _, v := range []string{
 		bp.DisasterRecovery, bp.Immutability, bp.PolicyPresets, bp.Monitoring,
@@ -472,9 +487,12 @@ func bestPracticesFullyAssessed(r *kdl.Report) bool {
 		bp.ExportRetentionExplicit, bp.ClusterScopedResources,
 		bp.PoliciesWithoutExport,
 	} {
-		if v == kdl.StatusNotAssessed || strings.TrimSpace(v) == "" {
-			return false
+		// N/A does not count. It is a real answer on its own -- the check does not
+		// apply to this cluster -- but a section whose only non-unknown entries are
+		// inapplicable checks still says nothing about the cluster's posture.
+		if v != kdl.StatusNotAssessed && v != statusNA && strings.TrimSpace(v) != "" {
+			return true
 		}
 	}
-	return true
+	return false
 }

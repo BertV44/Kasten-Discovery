@@ -164,11 +164,39 @@ func TestUnreadInputIsNotAssessedRatherThanFailing(t *testing.T) {
 			t.Errorf("%s = %q, which reads as a pass on a cluster nobody could inspect", tc.name, tc.got)
 		}
 	}
-	if !r.NotCollected("bestPractices") {
-		t.Error("bestPractices is not declared unpopulated even though no check was assessed")
+	// The section stays published: thirteen of the sixteen checks did get a real
+	// verdict here, kdl diff already skips an individual NOT_ASSESSED, and
+	// blanking the section would throw those thirteen away for nothing.
+	if r.NotCollected("bestPractices") {
+		t.Error("bestPractices is declared unpopulated although most of its checks were assessed")
 	}
+	// The grade cannot degrade that way: it is one number, and a pillar scored
+	// zero for lack of evidence reads as a failed control.
 	if !r.NotCollected("ransomwareReadiness") {
 		t.Error("ransomwareReadiness is not declared unpopulated; a grade has no room for 'partly unknown'")
+	}
+}
+
+// TestBestPracticesIsDeclaredOnlyWhenNothingWasAssessed: a section where no check
+// could be evaluated says nothing about the cluster, and that is the one case
+// where publishing it is worse than declaring it.
+func TestBestPracticesIsDeclaredOnlyWhenNothingWasAssessed(t *testing.T) {
+	denied := map[string]error{}
+	for _, resource := range []string{
+		"policies", "runactions", "namespaces", "profiles", "pods", "deployments",
+		"policypresets", "virtualmachines", "restorepoints", "secrets", "configmaps",
+	} {
+		denied[resource] = forbidden(resource)
+	}
+	res := collect(t, &fakeReader{errs: denied})
+	res.CollectedAt = testNow
+	r := Build(res)
+
+	if !r.NotCollected("bestPractices") {
+		t.Errorf("bestPractices is not declared with every input denied: %+v", r.BestPractices)
+	}
+	if bestPracticesAnyAssessed(r) {
+		t.Errorf("a check reports a verdict with every input denied: %+v", r.BestPractices)
 	}
 }
 
@@ -322,5 +350,34 @@ func TestNamespacePolicyCoversItsVMs(t *testing.T) {
 	}
 	if got := r.BestPractices.VMProtection; got != statusComplete {
 		t.Errorf("vmProtection = %q, want %q: every VM is covered", got, statusComplete)
+	}
+}
+
+// TestDeniedVMReadIsNotNoVMs: a denied VM listing also leaves totalVMs at zero,
+// so answering "N/A — no VMs on this cluster" first would make a refused read
+// look like a fact about virtualization.
+func TestDeniedVMReadIsNotNoVMs(t *testing.T) {
+	res := collect(t, &fakeReader{
+		errs: map[string]error{"virtualmachines": forbidden("virtualmachines")},
+	})
+	res.CollectedAt = testNow
+	r := Build(res)
+
+	if got := r.BestPractices.VMProtection; got != kdl.StatusNotAssessed {
+		t.Errorf("vmProtection = %q, want %q: the VM listing was denied, not empty",
+			got, kdl.StatusNotAssessed)
+	}
+
+	// And a cluster that genuinely serves no KubeVirt still reports N/A.
+	served := map[string]bool{}
+	for _, tg := range targets(Options{KastenNamespace: "kasten-io"}) {
+		served[tg.gvr.Resource] = true
+	}
+	served["virtualmachines"] = false
+	absent := collect(t, &fakeReader{served: served})
+	absent.CollectedAt = testNow
+
+	if got := Build(absent).BestPractices.VMProtection; got != statusNA {
+		t.Errorf("vmProtection = %q, want %q on a cluster with no KubeVirt", got, statusNA)
 	}
 }

@@ -67,7 +67,6 @@ func Build(res Result) *kdl.Report {
 	buildPolicyExclusions(res, r)
 	buildUnprotectedBreakdown(r, cfg)
 	buildNonDefaultSettings(r)
-	r.CollectionFlags.SkipHelm = res.SkipHelm
 	buildVMRestorePointConsistency(res, r)
 	buildCatalog(res, r)
 	buildDataUsage(res, r)
@@ -96,19 +95,26 @@ func Build(res Result) *kdl.Report {
 	buildBestPractices(res, r)
 	buildRansomwareReadiness(res, r)
 
-	// Both verdict sections stay published with individual checks marked
-	// NOT_ASSESSED -- that status is legible on the page and counted apart from
-	// passes and failures. What cannot survive a missing input is the ransomware
-	// *grade*: it is one number, and there is no room in it for "partly
-	// unknown", so a pillar scored zero for lack of evidence would read as a
-	// failed control. bestPractices is declared only when nothing in it was
-	// assessed, so kdl diff stops comparing a set of unknowns.
+	// The two verdict sections degrade differently, so they are declared on
+	// different conditions.
+	//
+	// bestPractices stays published while any check got a real verdict: an
+	// individual NOT_ASSESSED is legible on the page, counted apart from passes
+	// and failures, and already skipped by kdl diff. Only a section where nothing
+	// at all was assessed says nothing about the cluster.
+	//
+	// The ransomware grade cannot degrade that way. It is one number with no room
+	// in it for "partly unknown", so a pillar scored zero for lack of evidence
+	// reads as a failed control -- and the section is declared whenever any
+	// pillar's input was missing.
 	if !ransomwarePillarInputs(res, r) {
 		r.UnpopulatedSections = append(r.UnpopulatedSections, "ransomwareReadiness")
 	}
-	if !bestPracticesFullyAssessed(r) {
+	if !bestPracticesAnyAssessed(r) {
 		r.UnpopulatedSections = append(r.UnpopulatedSections, "bestPractices")
 	}
+
+	r.CollectionFlags.SkipHelm = res.SkipHelm
 
 	return r
 }

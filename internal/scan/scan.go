@@ -62,7 +62,12 @@ func Run(args []string) error {
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall time budget for the collection")
 	parallelism := fs.Int("parallelism", 8, "how many resources to fetch concurrently")
 	qps := fs.Float64("qps", 20, "client-side API request rate limit")
-	noHelm := fs.Bool("no-helm", false, "do not read the Helm release object (K10 settings then come from the k10-config ConfigMap only)")
+	// -no-helm stops the Helm release from being read and decoded. It does not
+	// make the scan secret-free: the licence secrets are read namespace-wide, and
+	// that listing includes the release object's bytes whether or not anything
+	// looks at them. KDL.sh has the same property, and saying so here keeps the
+	// flag from being read as more of a guarantee than it is.
+	noHelm := fs.Bool("no-helm", false, "do not read or decode the Helm release object (K10 settings then come from the k10-config ConfigMap only)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `kdl scan -- collect a discovery report from a cluster (read-only)
 
