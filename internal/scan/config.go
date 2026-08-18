@@ -57,14 +57,39 @@ type installConfig struct {
 	cm map[string]string
 	// source names which of the two produced the Helm-level values.
 	source string
+	// helmDenied records that the Helm release read was attempted and refused,
+	// which is a different fact from every other state this struct can be in.
+	//
+	// It matters because the ConfigMap almost always exists, so source lands on
+	// "configmap" and usable() answers true -- while authentication, KMS encryption
+	// and audit logging live ONLY in the Helm values. Without this flag the section
+	// was published, undeclared, reporting that a hardened cluster had no dashboard
+	// authentication and no KMS: the most alarming statement the report can make
+	// about security, from a read that was refused. Reading a Secret in the Kasten
+	// namespace is also the single most likely denial in the whole plan.
+	helmDenied bool
 }
 
-// usable reports whether either source produced values. When neither did, every
-// field in the section is a default rather than a reading, and the section is
-// declared unpopulated: a page of K10's default limits presented as this
-// cluster's settings is a report that says nothing while looking complete.
+// usable reports whether the section as a whole says anything about this
+// cluster. When neither source produced values every field is a default, and a
+// page of K10's default limits presented as this cluster's settings is a report
+// that says nothing while looking complete.
+//
+// A refused Helm read is not usable either, even when the ConfigMap answered:
+// the settings the verdicts depend on are only in the Helm values, so publishing
+// the section would publish those three as negative findings.
 func (c installConfig) usable() bool {
+	if c.helmDenied {
+		return false
+	}
 	return c.source == sourceHelmSecret || c.source == sourceConfigMap
+}
+
+// securityAssessable reports whether the authentication, encryption and audit
+// settings were readable at all. They live only in the Helm values, so the
+// ConfigMap fallback does not cover them and neither does a default.
+func (c installConfig) securityAssessable() bool {
+	return !c.helmDenied && c.source != sourceSkipped && c.source != sourceNone
 }
 
 // helmAvailable reports whether the authoritative source answered. The
@@ -155,6 +180,12 @@ func loadInstallConfig(res Result, skipHelm bool) installConfig {
 	if skipHelm {
 		cfg.source = sourceSkipped
 		return cfg
+	}
+
+	// Denied is kept apart from "returned nothing": a cluster with no Helm release
+	// at all is a legitimate install shape, and a refused read is not.
+	if c := res.Get("helmRelease"); c.Denied || c.Err != nil {
+		cfg.helmDenied = true
 	}
 
 	// Helm keeps one object per revision; the newest is the live one.
@@ -461,7 +492,7 @@ func authentication(cfg installConfig) kdl.K10ConfigurationSecurityAuthenticatio
 	//
 	// So the third answer is "unknown". "none" is among the most alarming
 	// findings the report can carry, and it must mean somebody checked.
-	if !cfg.usable() {
+	if !cfg.securityAssessable() {
 		return kdl.K10ConfigurationSecurityAuthentication{Method: "unknown"}
 	}
 	return kdl.K10ConfigurationSecurityAuthentication{Method: "none"}

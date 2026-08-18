@@ -155,8 +155,15 @@ func drHealth(res Result, now time.Time) (status, lastState, lastSuccess string)
 		// Staleness is computed, not defaulted. KDL.sh notes the trap in its own
 		// implementation: `.successStale // true` treats a healthy false as
 		// absent and flips it, marking every non-stale DR stale.
-		days, ok := ageDays(lastSuccess, now)
-		if !ok || days > staleBackupThresholdDays {
+		//
+		// The comparison is on the elapsed duration, not on whole days. KDL.sh
+		// compares raw seconds here (unlike the namespace-staleness path, where it
+		// floors to days and so does this collector), and flooring first made a DR
+		// last successful 7.5 days ago read ENABLED where the shell says
+		// CONFIGURED_NOT_HEALTHY -- flipping a critical check and 15 ransomware
+		// points, a whole grade band, in the reassuring direction.
+		age, ok := elapsed(lastSuccess, now)
+		if !ok || age > staleBackupThresholdDays*24*time.Hour {
 			return drNotHealthy, lastState, lastSuccess
 		}
 		return drEnabled, lastState, lastSuccess

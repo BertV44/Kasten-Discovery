@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BertV44/Kasten-Discovery/internal/diff"
+	"github.com/BertV44/Kasten-Discovery/internal/report"
 	kdl "github.com/BertV44/Kasten-Discovery/internal/schema"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -938,5 +940,68 @@ func TestReportsPolicyExplainsAbsentExportFigures(t *testing.T) {
 	}
 	if got := present.ReportsPolicy.LastRun.State; got != "Complete" {
 		t.Errorf("lastRun.state = %q, want Complete", got)
+	}
+}
+
+// TestEveryConsumerGuardIsDeclarable is the check that was missing, and its
+// absence let thirteen renderer guards and seven diff guards sit dead.
+//
+// A guard names a section and asks whether the producer declared it uncomputed.
+// If the producer can never emit that name, the guard is unreachable code shaped
+// exactly like a safety net -- and the section it was meant to protect renders its
+// zero values as findings about the cluster. This test makes the next mismatch a
+// failing build rather than a wrong report.
+func TestEveryConsumerGuardIsDeclarable(t *testing.T) {
+	declarable := DeclarableSections()
+
+	for _, section := range report.GuardedSections() {
+		if !declarable[section] {
+			t.Errorf("the HTML renderer guards on %q, which this collector can never declare; "+
+				"the guard is dead and the section will render its zero values as findings", section)
+		}
+	}
+	for _, section := range diff.ComparedSections() {
+		if !declarable[section] {
+			t.Errorf("kdl diff skips %q when it is declared, but this collector can never declare it; "+
+				"a denied read there produces regressions on an unchanged cluster", section)
+		}
+	}
+}
+
+// TestEveryReportSectionCanBeDeclared: a section with no way to declare itself is
+// a section that will present zeros as facts the first time its read is refused.
+// The exemptions are the fields that are metadata about the scan rather than
+// findings about the cluster.
+func TestEveryReportSectionCanBeDeclared(t *testing.T) {
+	exempt := map[string]bool{
+		// Scan metadata: describes the run, not the cluster.
+		"kdlVersion": true, "platform": true, "kastenVersion": true,
+		"kastenCompatibility": true, "rbacLimited": true, "collectionFlags": true,
+		"unpopulatedSections": true, "cluster": true,
+		// Scalars carried alongside profiles, and declared through it.
+		"immutabilitySignal": true, "immutabilityDays": true,
+		// policyRunStats is declared through its three sub-paths, which is finer
+		// grained than the section: kdl diff compares effectiveRpo on its own.
+		"policyRunStats": true,
+		// Derived entirely from sections that are themselves declarable.
+		"failedActionsTop5": true, "stuckActions": true,
+		"namespaceProtectionStatus": true, "restorePointsByNamespace": true,
+		"orphanedRestorePoints": true, "retentionAnalysis": true,
+		"disasterRecovery": true, "monitoring": true, "multiCluster": true,
+		"dataUsage": true, "license": true, "reportsPolicy": true,
+		"catalog": true, "virtualization": true, "profileValidation": true,
+		"ransomwareReadiness": true, "bestPractices": true, "k10Configuration": true,
+		// Self-describing: carries its own per-list accessibility flags and renders
+		// a partial-inventory note, which beats withholding the lists that were read.
+		"k10Rbac": true,
+	}
+	declarable := DeclarableSections()
+
+	for section := range topLevelSectionNames(t) {
+		if declarable[section] || exempt[section] {
+			continue
+		}
+		t.Errorf("no way to declare %q uncomputed: if its read is refused, the section "+
+			"renders its zero values and nothing anywhere says why", section)
 	}
 }

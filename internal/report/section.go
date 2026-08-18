@@ -38,6 +38,11 @@ type Section struct {
 	Tables   []Table
 	Boxes    []Box
 	Progress *Progress
+
+	// guards records the report sections this one is derived from, as passed to
+	// from. It exists so GuardedSections can report the whole set without a second
+	// hand-maintained list to drift from this one.
+	guards []string
 }
 
 // Row is a label/value line inside a card.
@@ -111,6 +116,8 @@ type Progress struct {
 // three special template blocks render from view structs that were built from
 // the same absent data.
 func (s Section) from(r *schema.Report, sources ...string) Section {
+	s.guards = append(s.guards, sources...)
+
 	var missing []string
 	for _, src := range sources {
 		if r.NotCollected(src) {
@@ -123,6 +130,7 @@ func (s Section) from(r *schema.Report, sources ...string) Section {
 	return Section{
 		Title:    s.Title,
 		NewBadge: s.NewBadge,
+		guards:   s.guards,
 		Boxes: []Box{infoBox(
 			"This section was not collected, so nothing here is a finding about the cluster. "+
 				"The report that produced this page declares it uncomputed — an empty value below "+

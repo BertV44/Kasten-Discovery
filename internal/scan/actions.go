@@ -480,6 +480,16 @@ func ageHours(ts string, now time.Time) (int, bool) {
 	return int(now.Sub(t).Hours()), true
 }
 
+// elapsed is the unrounded time since a timestamp, for the comparisons KDL.sh
+// makes in raw seconds rather than in whole days.
+func elapsed(ts string, now time.Time) (time.Duration, bool) {
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return 0, false
+	}
+	return now.Sub(t), true
+}
+
 func ageDays(ts string, now time.Time) (int, bool) {
 	t, err := time.Parse(time.RFC3339, ts)
 	if err != nil {

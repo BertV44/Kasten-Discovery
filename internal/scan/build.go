@@ -98,8 +98,8 @@ func Build(res Result) *kdl.Report {
 	// every check asks whether the section it grades was populated, which means
 	// the declarations above have to be in place first.
 	r.UnpopulatedSections = unpopulatedFor(res, alsoUnpopulated)
-	buildBestPractices(res, r)
-	buildRansomwareReadiness(res, r)
+	buildBestPractices(res, r, cfg)
+	buildRansomwareReadiness(res, r, cfg)
 
 	// The two verdict sections degrade differently, so they are declared on
 	// different conditions.
@@ -113,7 +113,7 @@ func Build(res Result) *kdl.Report {
 	// in it for "partly unknown", so a pillar scored zero for lack of evidence
 	// reads as a failed control -- and the section is declared whenever any
 	// pillar's input was missing.
-	if !ransomwarePillarInputs(res, r) {
+	if !ransomwarePillarInputs(res, r, cfg) {
 		r.UnpopulatedSections = append(r.UnpopulatedSections, "ransomwareReadiness")
 	}
 	if !bestPracticesAnyAssessed(r) {
@@ -155,6 +155,28 @@ func UnpopulatedSections() []string {
 // thinner. failedActionsTop5 names all three action listings because "the five
 // most recent failures" computed from two of them is a claim about all three.
 var sectionInputs = map[string][]string{
+	// The primary inventory sections. They were absent from this table while
+	// thirteen sections derived from them were in it, which is the worst possible
+	// arrangement: a denied policy listing declared the derived sections and left
+	// the policy count itself reading zero, so the page announced "no policy
+	// defined" while the checks derived from policies correctly said nothing was
+	// assessed. The two halves of the report contradicted each other.
+	"policies":              {"policies"},
+	"profiles":              {"profiles"},
+	"coverage":              {"policies", "namespaces"},
+	"policyAnalysis":        {"policies", "namespaces"},
+	"importPolicies":        {"policies"},
+	"policiesWithoutExport": {"policies"},
+	"policyPresets":         {"policyPresets"},
+	"kanister":              {"blueprints", "blueprintBindings"},
+	"transformSets":         {"transformSets"},
+	"storageClasses":        {"storageClasses"},
+	"volumeSnapshotClasses": {"volumeSnapshotClasses"},
+	"k10Resources":          {"k10Pods", "k10Deployments"},
+	// Health counts finished actions and restore points. A denied action listing
+	// leaves it reporting zero backups and a success rate of N/A, which reads as a
+	// cluster that has never run one.
+	"health":                    {"backupActions", "exportActions", "restoreActions"},
 	"profileValidation":         {"profiles"},
 	"failedActionsTop5":         {"backupActions", "exportActions", "restoreActions"},
 	"stuckActions":              {"backupActions", "exportActions", "restoreActions"},
@@ -196,6 +218,33 @@ var sectionInputs = map[string][]string{
 	// The reporting policy's own health: whether it exists, and whether its runs
 	// are succeeding.
 	"reportsPolicy": {"policies", "reportActions"},
+}
+
+// buildTimeDeclarations names the sections declared by Build rather than from
+// sectionInputs, because whether they were computed is not a property of one
+// read. Kept beside the table so DeclarableSections can report the whole
+// vocabulary in one place.
+var buildTimeDeclarations = []string{
+	"k10Configuration", "catalog.freeSpacePercent", "ransomwareReadiness", "bestPractices",
+}
+
+// DeclarableSections is every name this collector can put in
+// unpopulatedSections.
+//
+// It is exported because it is a contract with the consumers, not an
+// implementation detail: kdl diff and the HTML renderer each guard sections by
+// name, and a guard on a name the producer can never emit is dead code that
+// looks like a safety net. Thirteen renderer guards and seven diff guards were
+// exactly that. Tests in both packages now check their names against this set.
+func DeclarableSections() map[string]bool {
+	out := make(map[string]bool, len(sectionInputs)+len(buildTimeDeclarations))
+	for section := range sectionInputs {
+		out[section] = true
+	}
+	for _, section := range buildTimeDeclarations {
+		out[section] = true
+	}
+	return out
 }
 
 // unpopulatedFor is the list declared in one report: the sections this build
@@ -673,6 +722,15 @@ func buildVirtualization(res Result, r *kdl.Report) {
 }
 
 func buildStorage(res Result, r *kdl.Report) {
+	// rbacAccessible is a claim about the read, and it has to be made explicitly:
+	// left at its zero value it says "denied" on every report, and the renderer
+	// then hides the classes it did collect behind an RBAC warning that describes
+	// nothing that happened. Absent counts as accessible -- a cluster with no CSI
+	// snapshot support serves no VolumeSnapshotClasses, and that is not a denial.
+	scRead, vscRead := res.Get("storageClasses"), res.Get("volumeSnapshotClasses")
+	r.StorageClasses.RBACAccessible = scRead.OK() || scRead.Absent
+	r.VolumeSnapshotClasses.RBACAccessible = vscRead.OK() || vscRead.Absent
+
 	if c := res.Get("storageClasses"); c.OK() {
 		items := make([]kdl.StorageClassesItem, 0, len(c.Items))
 		def := 0

@@ -47,7 +47,7 @@ const (
 // uncollected sections, so this consults that declaration rather than guessing
 // from zero values -- a count of zero is the answer for a healthy cluster and for
 // an unread one, and the whole point of the exercise is to keep those apart.
-func buildBestPractices(res Result, r *kdl.Report) {
+func buildBestPractices(res Result, r *kdl.Report, cfg installConfig) {
 	bp := &r.BestPractices
 	uncollected := func(sections ...string) bool {
 		for _, s := range sections {
@@ -67,10 +67,15 @@ func buildBestPractices(res Result, r *kdl.Report) {
 	}
 
 	// Critical: an unauthenticated dashboard is a restore capability open to
-	// anyone who can reach it. "unknown" is the collector saying neither config
-	// source was readable, and it must not read as a failure.
+	// anyone who can reach it. "unknown" is the collector saying the settings were
+	// not readable, and it must not read as a failure.
+	//
+	// securityAssessable rather than uncollected("k10Configuration"): these three
+	// settings live only in the Helm values, so they are unknown whenever that read
+	// was refused even though the ConfigMap answered for everything else.
+	securityRead := cfg.securityAssessable()
 	switch method := r.K10Configuration.Security.Authentication.Method; {
-	case method == "" || method == "unknown" || uncollected("k10Configuration"):
+	case method == "" || method == "unknown" || !securityRead:
 		bp.Authentication = kdl.StatusNotAssessed
 	case method != "none":
 		bp.Authentication = statusConfigured
@@ -90,7 +95,7 @@ func buildBestPractices(res Result, r *kdl.Report) {
 		bp.Immutability = statusNotConfigured
 	}
 
-	if uncollected("k10Configuration") {
+	if !securityRead {
 		bp.Encryption = kdl.StatusNotAssessed
 		bp.AuditLogging = kdl.StatusNotAssessed
 	} else {
@@ -102,10 +107,22 @@ func buildBestPractices(res Result, r *kdl.Report) {
 	// Namespace protection reads the actionable count, not the raw one: a
 	// namespace deliberately excluded through excludedApps or a policy exception
 	// is not a gap, and counting it as one buries the ones that are.
+	//
+	// Which means the check cannot be answered when the breakdown is unknown. It
+	// used to fall back to the raw count -- the very number the declaration
+	// invalidates -- so a denied ConfigMap read turned COMPLETE into GAPS_DETECTED
+	// and painted a coverage gap on a cluster whose deliberate exclusions nobody
+	// could read.
 	switch {
 	case !res.Get("namespaces").OK() || !res.Get("policies").OK():
 		bp.NamespaceProtection = kdl.StatusNotAssessed
-	case r.Coverage.HasCatchallPolicy || actionableGaps(r) == 0:
+	case r.Coverage.HasCatchallPolicy:
+		// A catch-all policy protects every application namespace, so no exclusion
+		// list can change the answer.
+		bp.NamespaceProtection = statusComplete
+	case r.NotCollected("coverage.unprotectedBreakdown"):
+		bp.NamespaceProtection = kdl.StatusNotAssessed
+	case actionableGaps(r) == 0:
 		bp.NamespaceProtection = statusComplete
 	default:
 		bp.NamespaceProtection = statusGapsDetected
@@ -315,7 +332,7 @@ const (
 // honest on its own -- a zero pillar looks like a failed one. That is why the
 // section is declared unpopulated whenever any pillar's input was not collected:
 // a grade is a single number and there is no room in it for "partly unknown".
-func buildRansomwareReadiness(res Result, r *kdl.Report) {
+func buildRansomwareReadiness(res Result, r *kdl.Report, cfg installConfig) {
 	sec := r.K10Configuration.Security
 	tlsSkipped := profilesSkippingTLS(res)
 
@@ -450,8 +467,14 @@ func profilesSkippingTLS(res Result) []kdl.RansomwareProfileSkippingTLS {
 // on. A grade is one number with no room in it for "partly unknown", so if any
 // of these was not collected the whole section is declared uncomputed rather
 // than published with a pillar scored zero for lack of evidence.
-func ransomwarePillarInputs(res Result, r *kdl.Report) bool {
+func ransomwarePillarInputs(res Result, r *kdl.Report, cfg installConfig) bool {
 	if !res.Get("profiles").OK() || !res.Get("policies").OK() {
+		return false
+	}
+	// Four of the eight pillars read the security block, and it is unknown
+	// whenever the Helm release was refused -- which the section-level declaration
+	// does not catch, because the ConfigMap answers for the rest of the section.
+	if !cfg.securityAssessable() {
 		return false
 	}
 	for _, section := range []string{"disasterRecovery", "k10Configuration"} {

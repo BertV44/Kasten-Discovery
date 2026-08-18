@@ -259,6 +259,20 @@ func notCollected(base, cur *schema.Report, section string) bool {
 	return section != "" && (base.NotCollected(section) || cur.NotCollected(section))
 }
 
+// ComparedSections lists the report sections this comparison skips when either
+// side declares them uncomputed. Exported for the same reason as
+// report.GuardedSections: a guard on a name the producer cannot emit is dead code
+// wearing the costume of a safety net.
+func ComparedSections() []string {
+	var out []string
+	for _, s := range sections {
+		if s.source != "" {
+			out = append(out, s.source)
+		}
+	}
+	return out
+}
+
 // sections is the comparison contract, in the order kdl-diff.sh prints it.
 var sections = []sectionCmp{
 	{name: "Metadata", compare: cmpMetadata},
@@ -270,7 +284,11 @@ var sections = []sectionCmp{
 	{name: "Namespace Coverage", compare: cmpCoverage, source: "coverage"},
 	{name: "Policy Analysis", compare: cmpPolicyAnalysis, source: "policyAnalysis"},
 	{name: "Effective RPO", compare: cmpRPO, source: "policyRunStats.effectiveRpo"},
-	{name: "K10 RBAC", compare: cmpRBAC, source: "k10Rbac"},
+	// K10 RBAC carries no source on purpose: cmpRBAC guards itself on the
+	// inventory's own accessibility flags, which are finer grained than a
+	// section-level declaration -- three of four RBAC lists readable is worth
+	// comparing what was read, and the flags say what was not.
+	{name: "K10 RBAC", compare: cmpRBAC},
 	{name: "Profiles", compare: cmpProfiles, source: "profiles"},
 	{name: "Disaster Recovery", compare: cmpDR, source: "disasterRecovery"},
 	{name: "Virtualization", compare: cmpVirtualization, source: "virtualization"},

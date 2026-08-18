@@ -7,6 +7,21 @@ import (
 	"github.com/BertV44/Kasten-Discovery/internal/schema"
 )
 
+// GuardedSections lists the report sections this renderer replaces with a
+// not-collected note when the producer declares them uncomputed.
+//
+// Exported for one reason: a guard on a name the producer can never emit is dead
+// code that looks like a safety net, and thirteen of these were exactly that. The
+// test that checks this set against scan.DeclarableSections is what turns the next
+// such mismatch into a failing build.
+func GuardedSections() []string {
+	var out []string
+	for _, s := range buildSections(&schema.Report{}, nil, RansomwareView{}, PolicyView{}, ProfileView{}, RPOView{}) {
+		out = append(out, s.guards...)
+	}
+	return out
+}
+
 // buildSections returns every report section in the order kdl-json-to-html.sh
 // renders them. The sidebar nav is built client-side from the h2 headings, so this
 // order is also the nav order.
@@ -39,7 +54,11 @@ func buildSections(r *schema.Report, checks []Check, ransom RansomwareView, poli
 		ransomwareSection(ransom).from(r, "ransomwareReadiness"),
 		rpoSection(rpo).from(r, "policyRunStats.effectiveRpo"),
 		policyAnalysisSection(r).from(r, "policyAnalysis"),
-		k10RBACSection(r).from(r, "k10Rbac"),
+		// k10Rbac carries its own accessibility flags and renders a "⚠ Partial --
+		// some RBAC reads denied" row, so it is deliberately NOT guarded here:
+		// declaring the section would hide the roles that WERE read, along with the
+		// note explaining what is missing. Self-describing beats withheld.
+		k10RBACSection(r),
 		retentionAnalysisSection(r).from(r, "retentionAnalysis"),
 		policiesWithoutExportSection(r).from(r, "policiesWithoutExport"),
 		profileValidationSection(r).from(r, "profileValidation"),

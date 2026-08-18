@@ -350,9 +350,21 @@ func TestConsumptionStatusVocabulary(t *testing.T) {
 	}
 	// And nothing invented: a value KDL never emits must not be in the table,
 	// because its presence hides the fact that the real one is missing.
-	for _, invented := range []string{"OVER_LIMIT", "AT_LIMIT", "WITHIN_PAID", "UNKNOWN"} {
+	//
+	// UNKNOWN was on this list and should not have been. KDL.sh does emit it, as a
+	// per-licence status when dateEnd cannot be read (KDL.sh:960) -- just never as
+	// a consumption status, which is what misled the list. EXPIRING replaces it:
+	// KDL.sh has no expiry-warning threshold, so that one really was invented.
+	for _, invented := range []string{"OVER_LIMIT", "AT_LIMIT", "WITHIN_PAID", "EXPIRING"} {
 		if _, _, known := StatusBadge(invented); known {
 			t.Errorf("%s is in statusTable but KDL.sh never emits it", invented)
+		}
+	}
+	// The per-licence statuses, which render through the same table.
+	for _, emittedPerLicence := range []string{"VALID", "EXPIRED", "UNKNOWN"} {
+		if _, _, known := StatusBadge(emittedPerLicence); !known {
+			t.Errorf("%s is a licence status KDL.sh emits but statusTable does not model it; "+
+				"it renders as an amber \"? %s\"", emittedPerLicence, emittedPerLicence)
 		}
 	}
 }
