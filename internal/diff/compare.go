@@ -484,7 +484,7 @@ func cmpCatalog(base, cur *schema.Report, b *builder) {
 		return
 	}
 
-	bf, cf := base.Catalog.FreeSpacePercent, cur.Catalog.FreeSpacePercent
+	bf, cf := *base.Catalog.FreeSpacePercent, *cur.Catalog.FreeSpacePercent
 	if bf == cf {
 		return
 	}
@@ -511,11 +511,15 @@ func cmpCatalog(base, cur *schema.Report, b *builder) {
 	})
 }
 
-// catalogPresent distinguishes a catalog that was measured from one that was
-// never collected. A PVC name is the cheapest positive evidence the section ran.
+// catalogPresent distinguishes a catalog whose free space was measured from one
+// where it was not.
+//
+// It tests the figure this comparison actually reads, not the section as a
+// whole: a collector can identify the catalog PVC and its size without being
+// able to measure free space -- that number comes from running df inside the
+// pod -- so a named PVC is not evidence the percentage exists.
 func catalogPresent(r *schema.Report) bool {
-	return r.Catalog.PVCName != "" || r.Catalog.Size != "" ||
-		r.Catalog.FreeSpacePercent != 0 || r.Catalog.UsedPercent != 0
+	return r.Catalog.FreeSpacePercent != nil
 }
 
 func cmpPolicies(base, cur *schema.Report, b *builder) {

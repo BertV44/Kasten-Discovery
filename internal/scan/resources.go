@@ -22,6 +22,7 @@ var (
 	gvrDeployments = k8sschema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
 
 	gvrConfigMaps = k8sschema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+	gvrPVCs       = k8sschema.GroupVersionResource{Version: "v1", Resource: "persistentvolumeclaims"}
 	gvrServices   = k8sschema.GroupVersionResource{Version: "v1", Resource: "services"}
 	// Secrets are read once, by label, for the Helm release object only -- see
 	// the helmRelease target below.
@@ -33,6 +34,7 @@ var (
 
 	gvrStorageClasses = k8sschema.GroupVersionResource{Group: "storage.k8s.io", Version: "v1", Resource: "storageclasses"}
 	gvrVolumeSnapClas = k8sschema.GroupVersionResource{Group: "snapshot.storage.k8s.io", Version: "v1", Resource: "volumesnapshotclasses"}
+	gvrVolumeSnaps    = k8sschema.GroupVersionResource{Group: "snapshot.storage.k8s.io", Version: "v1", Resource: "volumesnapshots"}
 
 	gvrClusterRoles        = k8sschema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"}
 	gvrClusterRoleBindings = k8sschema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"}
@@ -52,6 +54,14 @@ var (
 	gvrRestoreActions = k8sschema.GroupVersionResource{Group: "actions.kio.kasten.io", Version: "v1alpha1", Resource: "restoreactions"}
 
 	gvrRestorePoints = k8sschema.GroupVersionResource{Group: "apps.kio.kasten.io", Version: "v1alpha1", Resource: "restorepoints"}
+	// K10's own reporting output. Reports exist only where the system reports
+	// policy has run, which is why the export-storage and licensing figures they
+	// carry are optional. ReportActions are the runs themselves, and say whether
+	// that policy is working.
+	gvrK10Reports    = k8sschema.GroupVersionResource{Group: "reporting.kio.kasten.io", Version: "v1alpha1", Resource: "reports"}
+	gvrReportActions = k8sschema.GroupVersionResource{Group: "actions.kio.kasten.io", Version: "v1alpha1", Resource: "reportactions"}
+
+	gvrNodes = k8sschema.GroupVersionResource{Version: "v1", Resource: "nodes"}
 
 	// Multi-cluster: the joined-cluster records a primary holds.
 	gvrMCClusters = k8sschema.GroupVersionResource{Group: "dist.kio.kasten.io", Version: "v1alpha1", Resource: "clusters"}
@@ -137,6 +147,29 @@ func targets(opts Options) []target {
 		{key: "exportActions", gvr: gvrExportActions},
 		{key: "restoreActions", gvr: gvrRestoreActions},
 		{key: "restorePoints", gvr: gvrRestorePoints, optional: true},
+		{key: "k10Reports", gvr: gvrK10Reports, namespaced: true, optional: true},
+		{key: "reportActions", gvr: gvrReportActions, namespaced: true, optional: true},
+
+		// Cluster-wide PVCs are the widest read here by object count. They carry
+		// the catalog's size and the protected footprint, and nothing narrower
+		// answers either question.
+		{key: "pvcs", gvr: gvrPVCs},
+		{key: "volumeSnapshots", gvr: gvrVolumeSnaps, optional: true},
+
+		// Nodes are read for one figure: how many the cluster consumes against
+		// its licence. Listing them cluster-wide is not part of K10's own
+		// ClusterRole, so a denial here is expected -- and it degrades to
+		// "not assessed" rather than to a node count of zero, which would read as
+		// a licence comfortably within its limit.
+		{key: "nodes", gvr: gvrNodes},
+
+		// Licence secrets. The read is namespace-wide because K10 licence secrets
+		// carry no distinguishing label and their names vary (k10-license,
+		// k10-trial-license, renamed variants), so there is nothing narrower to
+		// select on. Only secrets whose name contains "license" are looked at, and
+		// nothing from the payload is emitted except the licence fields the report
+		// models -- never the raw value.
+		{key: "licenseSecrets", gvr: gvrSecrets, namespaced: true},
 
 		{key: "clusterRoles", gvr: gvrClusterRoles},
 		{key: "clusterRoleBindings", gvr: gvrClusterRoleBindings},

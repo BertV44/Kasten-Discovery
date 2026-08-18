@@ -166,11 +166,23 @@ type License struct {
 	Status             string                    `json:"status"`
 	SecretCount        int                       `json:"secretCount"`
 	ParseableCount     int                       `json:"parseableCount"`
-	Unparseable        []json.RawMessage         `json:"unparseable"` // empty array in the source sample - element type unverified
+	Unparseable        []LicenseUnparseable      `json:"unparseable"`
 	Licenses           []LicenseEntry            `json:"licenses"`
 	NodeLimitAggregate LicenseNodeLimitAggregate `json:"nodeLimitAggregate"`
 	NodeConsumption    LicenseNodeConsumption    `json:"nodeConsumption"`
 	NearestExpiry      LicenseNearestExpiry      `json:"nearestExpiry"`
+}
+
+// LicenseUnparseable is a secret that looked like a licence and was not one, or
+// one whose payload could not be read.
+//
+// Typed from KDL.sh's emitter: both samples come from clusters whose licences all
+// parsed, so the list is empty in each -- and while it was raw, a cluster whose
+// licence could not be read showed a parseable count below its secret count with
+// no way to say which secret or why.
+type LicenseUnparseable struct {
+	Secret string `json:"secret"`
+	Reason string `json:"reason"`
 }
 
 // HealthPods mirrors the corresponding object in the KDL report JSON.
@@ -622,10 +634,18 @@ type K10Resources struct {
 
 // Catalog mirrors the corresponding object in the KDL report JSON.
 type Catalog struct {
-	PVCName          string `json:"pvcName"`
-	Size             string `json:"size"`
-	FreeSpacePercent int    `json:"freeSpacePercent"`
-	UsedPercent      int    `json:"usedPercent"`
+	PVCName string `json:"pvcName"`
+	Size    string `json:"size"`
+	// The two percentages are null whenever the producer could not measure them,
+	// which KDL.sh emits as `null` and which was decoding to 0 here -- a catalog
+	// reported as 0% free, the single most alarming line the section can carry,
+	// on a cluster where nothing was measured.
+	//
+	// The Go collector never fills them: the figure comes from running df inside
+	// the catalog pod, and a pod exec is a create against pods/exec, which the
+	// read-only Reader has no verb for and readonly_test.go forbids.
+	FreeSpacePercent *int `json:"freeSpacePercent"`
+	UsedPercent      *int `json:"usedPercent"`
 }
 
 // OrphanedRestorePoints mirrors the corresponding object in the KDL report JSON.

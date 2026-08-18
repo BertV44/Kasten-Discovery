@@ -701,7 +701,9 @@ func TestEveryCollectedTargetFeedsTheReport(t *testing.T) {
 		"routes": true, "scc": true, "virtualMachines": true,
 		"k10ConfigMaps": true, "k10Services": true, "k10Ingresses": true,
 		"k10NetworkPolicies": true, "mutatingWebhooks": true, "mcClusters": true,
-		"helmRelease": true,
+		"helmRelease": true, "pvcs": true, "volumeSnapshots": true,
+		"reportActions": true, "k10Reports": true, "nodes": true,
+		"licenseSecrets": true,
 	}
 	for _, tg := range targets(Options{KastenNamespace: "kasten-io"}) {
 		if !consumed[tg.key] {
@@ -736,17 +738,23 @@ func TestImmutabilityDaysSurvivesDurationShapes(t *testing.T) {
 	}
 }
 
-// TestNoFalseRBACClaimOnTheLicenceSection: the licence section is not collected
-// at all, which unpopulatedSections declares. Marking node consumption "not
-// assessed" as well made the report say the node listing was denied by RBAC --
-// and nothing was denied, because the node read is not attempted.
-func TestNoFalseRBACClaimOnTheLicenceSection(t *testing.T) {
-	r := buildFrom(t, map[string][]unstructured.Unstructured{})
-
-	if r.License.NodeConsumption.Assessed != nil {
-		t.Error("node consumption is annotated as unassessed, which the renderer reports as an RBAC denial")
+// TestNodeConsumptionAssessmentMatchesWhatWasRead: the renderer shows an
+// unassessed node count as an RBAC denial, so the flag has to track whether the
+// read actually happened. It once said "denied" on a report where the node read
+// was never attempted at all, which is its own false claim.
+func TestNodeConsumptionAssessmentMatchesWhatWasRead(t *testing.T) {
+	read := buildFrom(t, map[string][]unstructured.Unstructured{})
+	if a := read.License.NodeConsumption.Assessed; a == nil || !*a {
+		t.Errorf("assessed = %v after a successful node read; the report claims a denial that did not happen", a)
 	}
-	if !contains(UnpopulatedSections(), "license") {
-		t.Error("the licence section must still be declared uncollected")
+
+	denied := Build(collect(t, &fakeReader{errs: map[string]error{"nodes": forbidden("nodes")}}))
+	if a := denied.License.NodeConsumption.Assessed; a == nil || *a {
+		t.Errorf("assessed = %v with the node listing denied; zero nodes against any limit "+
+			"reads as a licence comfortably inside its entitlement", a)
+	}
+	if got := denied.License.NodeConsumption.Status; got != kdl.StatusNotAssessed {
+		t.Errorf("consumption status = %q, want %q over a node count nobody could read",
+			got, kdl.StatusNotAssessed)
 	}
 }

@@ -54,6 +54,8 @@ type is a map.**
 | `StuckActionItem`, `OrphanedRestorePointItem`, `ProfileValidationItem.Error` | Typed from the emitter, not from a sample: every available report comes from a healthy cluster, so all three lists are empty in both. While they were `json.RawMessage` they type-checked and were **unrenderable**, which is how three unhealthy-cluster tables silently rendered as a bare count. |
 | `RetentionAnalysisSnapshotRetentionHighItem` | Same story, same fix: `{name, max}` per the emitter. Both samples come from clusters inside the threshold, so the list is empty in each, and the section rendered a count with no way to say which policies. |
 | `PolicyRunStatsLastRunEntry.Duration` → `*int` | `KDL.sh` emits `null` when a run recorded no start or end time. As an `int` that decoded to `0`, which is a run that finished instantly rather than one whose duration is unknown. |
+| `LicenseUnparseable` | `{secret, reason}` per the emitter. Both samples come from clusters whose licences all parsed, so the list is empty in each — and while it was raw, a cluster whose licence could not be read showed a parseable count below its secret count with no way to say which secret, or why. |
+| `Catalog.FreeSpacePercent`/`.UsedPercent` → `*int` | `KDL.sh` emits `null` when it could not run `df` in the catalog pod. As `int` that decoded to `0`, and 0% free is the most alarming line the section carries. The Go collector never fills them at all: a pod exec is a create against `pods/exec`, which the read-only Reader has no verb for. |
 | `RansomwareProfileSkippingTLS` | `{name}` per the emitter. Both samples come from clusters that verify TLS, so the list is empty in each — and while it was raw, the pillar could show a 0/5 deduction without ever naming the profile that caused it. |
 | `MultiCluster.PrimaryName`/`.ClusterID`, `K10ConfigurationSecurityEncryption.Details`, `…AuditLogging.Targets`, `K10ConfigurationSecurity.CustomCACertificate`, `K10ConfigurationPersistence.StorageClass`, `K10ConfigurationNonDefaultSettings.Items`, `K10Configuration.ClusterName` | All `*string` per the emitter, and all null in both samples because both come from standalone clusters with default security settings. Every one of them was unrendered while raw: the multi-cluster section showed a secondary with no primary, the security block never named the CA bundle or where the audit trail goes, and the tuned-settings count — the one line that makes four tables of numbers readable — was missing entirely. `NonDefaultSettings.Items` is worth singling out: it is **one comma-separated string**, not a list, because `KDL.sh` builds it by concatenation. |
 
@@ -63,14 +65,13 @@ conflates the two will report a Kasten 9.0 feature as absent on a 2.1 report.
 
 ## Not verified — needs a report that exercises them
 
-These 6 fields were `null` or an empty list in **both** available samples, so
+These 5 fields were `null` or an empty list in **both** available samples, so
 their type is a guess and they are kept as `json.RawMessage` rather than typed
 wrongly. Each one is a small, isolated task: get a report from a cluster that
 exercises the field, look at the value, replace the type.
 
 | Struct | Field |
 |---|---|
-| `License` | `unparseable` |
 | `PolicyPresetsItem` | `frequency` |
 | `PolicyPresetsItem` | `retention` |
 | `PolicyAnalysis` | `unresolvablePolicies` |

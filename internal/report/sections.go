@@ -468,26 +468,40 @@ func k10ResourcesSection(r *schema.Report) Section {
 
 func catalogSection(r *schema.Report) Section {
 	c := r.Catalog
-	class := "ok"
-	switch {
-	case c.FreeSpacePercent < 10:
-		class = "error"
-	case c.FreeSpacePercent < 25:
-		class = "warn"
-	}
-	return Section{
+	s := Section{
 		Title: "📁 Catalog",
 		Rows: []Row{
 			row("PVC Name", c.PVCName),
 			row("Size", c.Size),
-			{
-				Label:  "Free Space",
-				Badge:  &Badge{Class: class, Text: fmt.Sprintf("%d%%", c.FreeSpacePercent)},
-				Suffix: fmt.Sprintf("(Used: %d%%)", c.UsedPercent),
-			},
 		},
-		Progress: &Progress{Percent: c.UsedPercent},
 	}
+
+	// Free space is measured by running df inside the catalog pod, which not
+	// every producer can do. Printing 0% there is the most alarming line this
+	// section can carry, and it would be describing a measurement nobody took.
+	if c.FreeSpacePercent == nil {
+		s.Rows = append(s.Rows, row("Free Space", "not measured"))
+		return s
+	}
+
+	free := *c.FreeSpacePercent
+	class := "ok"
+	switch {
+	case free < 10:
+		class = "error"
+	case free < 25:
+		class = "warn"
+	}
+	usedRow := Row{
+		Label: "Free Space",
+		Badge: &Badge{Class: class, Text: fmt.Sprintf("%d%%", free)},
+	}
+	if c.UsedPercent != nil {
+		usedRow.Suffix = fmt.Sprintf("(Used: %d%%)", *c.UsedPercent)
+		s.Progress = &Progress{Percent: *c.UsedPercent}
+	}
+	s.Rows = append(s.Rows, usedRow)
+	return s
 }
 
 func orphanedRestorePointsSection(r *schema.Report) Section {

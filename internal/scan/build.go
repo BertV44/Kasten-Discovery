@@ -69,6 +69,9 @@ func Build(res Result) *kdl.Report {
 	buildNonDefaultSettings(r)
 	r.CollectionFlags.SkipHelm = res.SkipHelm
 	buildVMRestorePointConsistency(res, r)
+	buildCatalog(res, r)
+	buildDataUsage(res, r)
+	buildLicense(res, r, now)
 	buildRestorePointsByNamespace(res, r)
 	buildOrphanedRestorePoints(res, r)
 
@@ -115,11 +118,17 @@ func Build(res Result) *kdl.Report {
 // empty sections are "nothing found" and which are "not implemented".
 func UnpopulatedSections() []string {
 	return []string{
-		"dataUsage", "catalog", "license",
 		// policyAnalysis IS computed, but only partly: redundancy is not. Naming
 		// the sub-path keeps the rest of the section comparable while stopping a
 		// structural zero from reading as "21 redundant pairs resolved".
 		"policyAnalysis.summary.redundantPairsGenuine",
+		// The catalog's free space is the one figure this collector structurally
+		// cannot produce: it is measured by running df inside the catalog pod, and
+		// a pod exec is a create against pods/exec -- a verb the read-only Reader
+		// does not have and readonly_test.go forbids naming. The rest of the
+		// catalog section is collected; only this sub-path is declared, so a real
+		// change in the PVC or its size is still compared.
+		"catalog.freeSpacePercent",
 	}
 }
 
@@ -168,6 +177,15 @@ var sectionInputs = map[string][]string{
 	// virtualization.protection resolves policies against VMs; without either
 	// listing, "0 protected VMs" would be reported for every VM on the cluster.
 	"virtualization": {"policies", "virtualMachines"},
+	// The catalog PVC and the protected footprint both come from the PVC listing.
+	// Free space is a separate matter: this collector never measures it, and the
+	// null percentages say so rather than the section being withheld.
+	"catalog":   {"pvcs"},
+	"dataUsage": {"pvcs", "volumeSnapshots", "k10Reports"},
+	// The licence secrets are the only source; nothing else in the cluster states
+	// the entitlement. A denied read there is the difference between "no licence
+	// installed" and "we could not look", and those lead opposite ways.
+	"license": {"licenseSecrets"},
 }
 
 // unpopulatedFor is the list declared in one report: the sections this build
