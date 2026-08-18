@@ -1,6 +1,10 @@
 package report
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/BertV44/Kasten-Discovery/internal/schema"
+)
 
 // The report is 35 sections that are almost all the same three shapes: a card of
 // label/value rows, a grid of figures, and a table. Modelling those shapes once
@@ -90,6 +94,41 @@ type Box struct {
 // Progress is a bar with an inline width, used by the catalog section.
 type Progress struct {
 	Percent int
+}
+
+// from replaces a section's body when the report declares any of the sections it
+// renders uncomputed.
+//
+// unpopulatedSections is the producer saying "I did not collect this". The JSON
+// consumers already honour it -- kdl diff skips those sections rather than
+// reporting their zero values as regressions -- and the page has to as well,
+// because the page is what a customer reads. Without this, a report from a
+// collector whose RunAction read was refused renders "every policy: never ran",
+// a licence section that was never collected renders as an expired licence, and
+// nothing anywhere on the page says a read was refused.
+//
+// The replacement drops Kind so the section falls back to the generic shape: the
+// three special template blocks render from view structs that were built from
+// the same absent data.
+func (s Section) from(r *schema.Report, sources ...string) Section {
+	var missing []string
+	for _, src := range sources {
+		if r.NotCollected(src) {
+			missing = append(missing, src)
+		}
+	}
+	if len(missing) == 0 {
+		return s
+	}
+	return Section{
+		Title:    s.Title,
+		NewBadge: s.NewBadge,
+		Boxes: []Box{infoBox(
+			"This section was not collected, so nothing here is a finding about the cluster. "+
+				"The report that produced this page declares it uncomputed — an empty value below "+
+				"would mean \"not looked at\", not \"nothing found\".",
+			missing...)},
+	}
 }
 
 // ------------------------------------------------------------- constructors --
