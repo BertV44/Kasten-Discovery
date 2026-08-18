@@ -15,34 +15,90 @@ even `jq`, is often not an option.
 > | `kdl report` | **Working** — renders all 35 report sections from a discovery JSON |
 > | `kdl validate` | **Working** — type-checks a discovery JSON against the schema |
 > | `kdl diff` | **Working** — compares two reports; exit code = regression count |
-> | `kdl scan` | **Partial** — collects the inventory and coverage/policy analysis; the scoring sections are not computed yet, and it has never run against a live cluster |
+> | `kdl scan` | **Feature-complete, unverified** — computes every report section; has never run against a live cluster |
 >
 > The shell implementation at
 > [BertV44/Kasten-Disco-Lite](https://github.com/BertV44/Kasten-Disco-Lite) is
-> still the tool in use with customers, and remains the only one that produces a
-> complete report. This repository is where the Go rewrite happens; the two share
-> the report JSON as their contract.
+> still the tool in use with customers. This repository is where the Go rewrite
+> happens; the two share the report JSON as their contract.
 
-### What `kdl scan` does not do yet
+### What `kdl scan` does not do
 
-It collects the inventory (policies, profiles, namespaces, VMs, actions, RBAC,
-storage) and computes the two analyses the typed schema already knows how to
-derive — namespace coverage and policy analysis. It does **not** compute the
-verdict sections: ransomware readiness, the 16 best-practice checks, effective
-RPO, retention analysis, K10 configuration, disaster recovery, catalog, data
-usage. `kdl scan` prints that list on every run, so a report from it is never
-mistakable for a complete one.
+There is no section it cannot compute. There is one figure it cannot compute
+*unconditionally*: **catalog free space**.
 
-That split is deliberate. Those sections are judgements, and a judgement
-computed over a partially collected cluster is worse than an absent one.
+`KDL.sh` gets it by running `df` inside the catalog pod, and a pod exec is a
+*create* against `pods/exec` — a verb the read-only Reader does not have and which
+`readonly_test.go` fails the build for so much as naming. "KDL never mutates the
+cluster" is a promise made to customers and a percentage is not worth weakening it
+for. So the figure comes from the kubelet instead, which already measures every
+volume it mounts and publishes the numbers on a `GET`:
 
-The list is not only printed — it is written into the report as
-`unpopulatedSections`, and `kdl diff` skips any section named there. Without
-that, a Go-collected report diffed against a shell-collected one announced
-`3 licence(s) removed` and `K10 disaster recovery disabled`: the zero value of a
-licence list is "no licences", and nothing in the section itself distinguishes
-"never collected" from "collected and empty". A report that does *not* declare a
-section keeps being compared normally, so a real licence removal is still caught.
+```
+GET /api/v1/nodes/<node>/proxy/stats/summary
+```
+
+That needs `get` on `nodes/proxy`, which is **not** a permission K10 itself
+requires, so most clusters will not have granted it. When they have not, the
+percentages stay `null`, `catalog.freeSpacePercent` is declared uncomputed, and
+the PVC and its size are still collected. The refusal costs nothing else: the read
+sits outside the collection plan on purpose, so it never sets `rbacLimited` on the
+whole report — six reads were once removed from that plan for exactly that
+mistake.
+
+Everything else `kdl scan` leaves empty is either genuinely empty or declared,
+**per run**, as a read that did not return. That declaration is the mechanism the
+whole collector leans on:
+
+- Uncomputed sections are listed in the report's `unpopulatedSections`, `kdl diff`
+  skips any section named there, and the HTML renderer replaces it with a note
+  rather than rendering its zero values. Without that, a Go-collected report
+  diffed against a shell-collected one announced `3 licence(s) removed` and
+  `K10 disaster recovery disabled` — the zero value of a licence list is "no
+  licences", and nothing in the section itself distinguishes "never collected"
+  from "collected and empty". A report that does *not* declare a section keeps
+  being compared normally, so a real licence removal is still caught.
+- A section whose input RBAC refused is declared for that run. A scan by a service
+  account that cannot read BackupActions says so, instead of reporting that no
+  namespace in the cluster was ever backed up.
+- The 16 best-practice checks emit `NOT_ASSESSED` rather than passing or failing
+  when their input was not read, and the ransomware grade — one number, with no
+  room in it for "partly unknown" — is withheld entirely when any pillar's input
+  is missing. That includes a refused Helm read: authentication, KMS and audit
+  logging live only in the Helm values, so a denial there makes three checks
+  unassessed and withholds the grade, even though the `k10-config` ConfigMap
+  answered for the rest of the section.
+
+Every name a consumer guards on has to be a name the collector can actually emit.
+Thirteen renderer guards and seven diff guards once named sections it never
+declared, which made them dead code shaped like a safety net — so both consumers
+now expose their guard names and a test checks them against
+`scan.DeclarableSections`. The one section deliberately left unguarded is the RBAC
+inventory: it carries per-list accessibility flags and renders a partial-inventory
+note, and declaring it would hide the roles that *were* read.
+
+### What `kdl scan` reads
+
+Read-only, around thirty resource listings, fetched concurrently. Two are worth
+calling out because they are the widest asks in the plan:
+
+- **The Helm release object**: one label-selected Secret, from which only the
+  user-supplied `config` values are decoded — the rendered manifests in the rest
+  of the payload are never looked at. It is the only source for the settings K10
+  writes nowhere else (authentication, KMS, audit logging, concurrency limits).
+  `-no-helm` drops the read entirely, and the report records that choice in
+  `collectionFlags.skipHelm` and `k10Configuration.source`, because a
+  configuration section full of defaults looks nothing like one full of readings.
+- **The licence secrets**: read namespace-wide, because K10 licence secrets carry
+  no distinguishing label and their names vary across installs and renewals. Only
+  secrets whose name contains `license` are looked at, and nothing from the
+  payload reaches the report except the licence fields the schema models.
+
+One permission is **optional** and worth granting only if you want the figure:
+`get` on `nodes/proxy`, for catalog free space. It is a privileged permission — it
+reaches the kubelet API generally — so the scan asks for it best-effort and
+carries on without it. Nothing else in the report depends on it, and no
+best-practice check or ransomware pillar reads it.
 
 **The collector has never been exercised against a live Kasten install.** Its
 field paths are derived from `KDL.sh`'s jq expressions rather than from the
@@ -82,6 +138,9 @@ library — only `kdl scan` pays for those dependencies.
 ```bash
 # Collect a report from the current cluster (read-only)
 kdl scan -out discovery.json
+
+# Same, without reading the Helm release object
+kdl scan -no-helm -out discovery.json
 
 # Render the HTML report from a discovery JSON
 kdl report -in discovery.json -out report.html
@@ -134,11 +193,22 @@ internal/report/      HTML renderer, all 35 sections
   templates/          page.tmpl plus one block per irregular section
   assets/             style.css and app.js, embedded at build time
 internal/scan/        cluster collector
-  client.go           the read-only Reader: no write verb exists on it
+  client.go           the read-only Reader: no write verb exists on it, and the
+                      kubelet volume-stats GET is the narrowest shape that works
   resources.go        the collection plan, derived from KDL.sh's kubectl calls
   collect.go          parallel fetch; denied / absent / failed kept apart
   unstruct.go         bounded deep scan, the Go twin of KDL.sh's deep_first
-  build.go            collected objects -> typed report
+  build.go            collected objects -> typed report, plus what was NOT read
+  actions.go          the sections that are a reading of the action listings
+  runstats.go         policyRunStats: what the policies did, not what they say
+  retention.go        the three retention shapes, with their thresholds
+  features.go         whether DR, monitoring and multi-cluster actually work
+  config.go           K10's own install config: Helm release + k10-config
+  exclusions.go       deliberate opt-outs, and the gaps left once subtracted
+  vms.go              the three VM selector shapes, resolved against the VMs
+  license.go          licence secrets, and the paid-vs-trial entitlement
+  storage.go          catalog PVC and the protected footprint
+  verdicts.go         the 16 checks and the 8 ransomware pillars
   readonly_test.go    fails the build if any file names a write verb
 internal/diff/        report comparison
   compare.go          the 15 comparison sections, as a table

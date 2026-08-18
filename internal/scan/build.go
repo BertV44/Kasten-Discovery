@@ -38,6 +38,7 @@ func Build(res Result) *kdl.Report {
 	buildProfiles(res, r)
 	buildNamespaces(res, r)
 	buildVirtualization(res, r)
+	buildVMProtection(res, r)
 	buildStorage(res, r)
 	buildK10Resources(res, r)
 	buildRBACInventory(res, r)
@@ -45,65 +46,225 @@ func Build(res Result) *kdl.Report {
 	buildMisc(res, r)
 	buildCoverage(res, r)
 	buildPolicyAnalysis(res, r)
-	markUnassessedChecks(r)
+	buildProfileValidation(res, r)
+	buildFailedActions(res, r)
+	// One instant for every age in the report: two calls to Now() would let a
+	// stuck action and a stale namespace be measured against different clocks.
+	now := res.Now()
+	buildStuckActions(res, r, now)
+	buildNamespaceProtection(res, r, now)
+	buildPolicyRunStats(res, r, now)
+	buildRetentionAnalysis(r)
+	buildDisasterRecovery(res, r, now)
+	buildMonitoring(res, r)
+	buildMultiCluster(res, r)
+
+	// K10's own configuration, and the two sections that need it: the deliberate
+	// exclusions are read from the policies, but subtracting them from the
+	// unprotected count needs the excludedApps list the config carries.
+	cfg := loadInstallConfig(res, res.SkipHelm)
+	buildK10Configuration(res, r, cfg)
+	buildPolicyExclusions(res, r)
+	buildUnprotectedBreakdown(r, cfg)
+	buildNonDefaultSettings(r)
+	buildVirtualizationConfig(r, cfg)
+	buildVMRestorePointConsistency(res, r)
+	buildCatalog(res, r)
+	buildDataUsage(res, r)
+	buildLicense(res, r, now)
+	buildReportsPolicy(res, r)
+	buildRestorePointsByNamespace(res, r)
+	buildOrphanedRestorePoints(res, r)
 
 	// Declared in the report itself, not only on stderr. A consumer that cannot
 	// tell "not computed" from "computed and empty" reads every uncollected
 	// section as a cluster with nothing in it.
-	r.UnpopulatedSections = UnpopulatedSections()
+	//
+	// k10Configuration is declared here rather than from the input table,
+	// because whether it was computed is not a property of one read: -no-helm is
+	// a deliberate skip rather than a failure, and the ConfigMap fallback can
+	// still answer. What matters is whether either source produced anything.
+	var alsoUnpopulated []string
+	if !cfg.usable() {
+		alsoUnpopulated = append(alsoUnpopulated, "k10Configuration")
+	}
+	// The catalog's free space is measured by the kubelet, through a read most
+	// clusters do not grant. Declared only when it really is absent: on a cluster
+	// that does grant it the figure is real and must stay comparable.
+	if r.Catalog.FreeSpacePercent == nil {
+		alsoUnpopulated = append(alsoUnpopulated, "catalog.freeSpacePercent")
+	}
+
+	// The verdicts run last, and they read the report rather than the collection:
+	// every check asks whether the section it grades was populated, which means
+	// the declarations above have to be in place first.
+	r.UnpopulatedSections = unpopulatedFor(res, alsoUnpopulated)
+	buildBestPractices(res, r, cfg)
+	buildRansomwareReadiness(res, r, cfg)
+
+	// The two verdict sections degrade differently, so they are declared on
+	// different conditions.
+	//
+	// bestPractices stays published while any check got a real verdict: an
+	// individual NOT_ASSESSED is legible on the page, counted apart from passes
+	// and failures, and already skipped by kdl diff. Only a section where nothing
+	// at all was assessed says nothing about the cluster.
+	//
+	// The ransomware grade cannot degrade that way. It is one number with no room
+	// in it for "partly unknown", so a pillar scored zero for lack of evidence
+	// reads as a failed control -- and the section is declared whenever any
+	// pillar's input was missing.
+	if !ransomwarePillarInputs(res, r, cfg) {
+		r.UnpopulatedSections = append(r.UnpopulatedSections, "ransomwareReadiness")
+	}
+	if !bestPracticesAnyAssessed(r) {
+		r.UnpopulatedSections = append(r.UnpopulatedSections, "bestPractices")
+	}
+
+	r.CollectionFlags.SkipHelm = res.SkipHelm
 
 	return r
-}
-
-// markUnassessedChecks writes NOT_ASSESSED into every best-practice check this
-// collector does not compute.
-//
-// Leaving them empty is not neutral: the renderer reads an empty value as a
-// status it does not recognise, which fails the check, which paints the two
-// critical checks "✗ CRITICAL" and the report's verdict banner "2 Critical" --
-// on a cluster where nobody looked at either. Emitting the word KDL itself uses
-// for an unread value makes the renderer show them as not assessed instead.
-//
-// This is lesson four in both directions at once: an unassessed check must not
-// be reported as failing, and must not be reported as passing either.
-func markUnassessedChecks(r *kdl.Report) {
-	bp := &r.BestPractices
-	for _, field := range []*string{
-		&bp.DisasterRecovery, &bp.Immutability, &bp.PolicyPresets, &bp.Monitoring,
-		&bp.ResourceLimits, &bp.NamespaceProtection, &bp.VMProtection,
-		&bp.Authentication, &bp.Encryption, &bp.AuditLogging,
-		&bp.SnapshotRetentionHigh, &bp.SnapshotRetentionZero,
-		&bp.ExportRetentionExplicit, &bp.ClusterScopedResources,
-		&bp.PoliciesWithoutExport,
-	} {
-		if *field == "" {
-			*field = kdl.StatusNotAssessed
-		}
-	}
-	// The licence section is not collected at all, which unpopulatedSections
-	// already declares. Marking node consumption "not assessed" here as well
-	// made the report say "node listing denied by RBAC" -- and nothing was
-	// denied: the node read is not attempted. Telling a customer RBAC blocked
-	// something the tool never asked for is its own false claim, so the licence
-	// section is left to the declaration and not annotated here.
 }
 
 // UnpopulatedSections names the report sections this collector does not yet
 // compute. It is emitted in the scan summary rather than kept as a comment,
 // because a user comparing a Go report against a KDL.sh one needs to know which
 // empty sections are "nothing found" and which are "not implemented".
+// It is empty, and that is the goal state rather than an oversight: there is no
+// longer a section this build cannot compute at all. Everything a given run
+// leaves empty is declared by unpopulatedFor instead, against that run's reads.
+// The function stays because the distinction it draws is the one a reader needs
+// -- "this tool never does that" is a different message from "this run could
+// not" -- and the next section added will be listed here first.
 func UnpopulatedSections() []string {
-	return []string{
-		"ransomwareReadiness", "bestPractices", "policyRunStats.effectiveRpo",
-		"retentionAnalysis", "dataUsage", "k10Configuration", "disasterRecovery",
-		"catalog", "orphanedRestorePoints", "stuckActions", "failedActionsTop5",
-		"namespaceProtectionStatus", "restorePointsByNamespace", "profileValidation",
-		"multiCluster", "monitoring", "license",
-		// policyAnalysis IS computed, but only partly: redundancy is not. Naming
-		// the sub-path keeps the rest of the section comparable while stopping a
-		// structural zero from reading as "21 redundant pairs resolved".
-		"policyAnalysis.summary.redundantPairsGenuine",
+	return nil
+}
+
+// sectionInputs names the collections each computed section is derived from.
+//
+// "Not implemented" is not the only way a section ends up empty: a section whose
+// input was refused by RBAC or failed to read is equally uncomputed, and its
+// zero value is equally indistinguishable from a real empty. Declaring those per
+// run is what stops a scan by a restricted service account from diffing as a
+// cluster that lost every restore point it had.
+//
+// Absence does not disqualify a section. A cluster that does not serve
+// RestorePoints genuinely holds none, so zero there is a fact rather than a gap
+// -- which is the whole reason Collection keeps Absent apart from Denied.
+//
+// Every requirement here is one the section is *wrong* without, not merely
+// thinner. failedActionsTop5 names all three action listings because "the five
+// most recent failures" computed from two of them is a claim about all three.
+var sectionInputs = map[string][]string{
+	// The primary inventory sections. They were absent from this table while
+	// thirteen sections derived from them were in it, which is the worst possible
+	// arrangement: a denied policy listing declared the derived sections and left
+	// the policy count itself reading zero, so the page announced "no policy
+	// defined" while the checks derived from policies correctly said nothing was
+	// assessed. The two halves of the report contradicted each other.
+	"policies":              {"policies"},
+	"profiles":              {"profiles"},
+	"coverage":              {"policies", "namespaces"},
+	"policyAnalysis":        {"policies", "namespaces"},
+	"importPolicies":        {"policies"},
+	"policiesWithoutExport": {"policies"},
+	"policyPresets":         {"policyPresets"},
+	"kanister":              {"blueprints", "blueprintBindings"},
+	"transformSets":         {"transformSets"},
+	"storageClasses":        {"storageClasses"},
+	"volumeSnapshotClasses": {"volumeSnapshotClasses"},
+	"k10Resources":          {"k10Pods", "k10Deployments"},
+	// Health counts finished actions and restore points. A denied action listing
+	// leaves it reporting zero backups and a success rate of N/A, which reads as a
+	// cluster that has never run one.
+	"health":                    {"backupActions", "exportActions", "restoreActions"},
+	"profileValidation":         {"profiles"},
+	"failedActionsTop5":         {"backupActions", "exportActions", "restoreActions"},
+	"stuckActions":              {"backupActions", "exportActions", "restoreActions"},
+	"namespaceProtectionStatus": {"namespaces", "backupActions", "exportActions", "restoreActions"},
+	"restorePointsByNamespace":  {"restorePoints"},
+	"orphanedRestorePoints":     {"restorePoints", "policies"},
+	"retentionAnalysis":         {"policies"},
+	// All three policyRunStats sub-sections are measured from RunActions and are
+	// named separately, because the diff compares effectiveRpo on its own.
+	"policyRunStats.lastRuns":        {"policies", "runActions"},
+	"policyRunStats.averageDuration": {"runActions"},
+	"policyRunStats.effectiveRpo":    {"policies", "runActions"},
+	// The DR verdict is derived from the DR policy's run history, so a report
+	// that could not read either would otherwise announce NOT_ENABLED or
+	// CONFIGURED_NOT_HEALTHY on a healthy install.
+	"disasterRecovery": {"policies", "runActions"},
+	"monitoring":       {"k10Pods"},
+	// The role decides which of the other two fields is even meaningful, and it
+	// is read from the namespace listing and the join ConfigMap. mcClusters is
+	// required as well: on a primary whose cluster records could not be read,
+	// clusterCount zero would say no cluster has joined.
+	"multiCluster": {"namespaces", "k10ConfigMaps", "mcClusters"},
+	// The deliberate-exclusion split is only trustworthy with all three inputs.
+	// Missing one makes a real coverage gap look like a decision somebody made.
+	"coverage.unprotectedBreakdown":     {"policies", "namespaces", "k10ConfigMaps"},
+	"k10Configuration.policyExclusions": {"policies", "namespaces"},
+	// virtualization.protection resolves policies against VMs; without either
+	// listing, "0 protected VMs" would be reported for every VM on the cluster.
+	"virtualization": {"policies", "virtualMachines"},
+	// The catalog PVC and the protected footprint both come from the PVC listing.
+	// Free space is a separate matter: this collector never measures it, and the
+	// null percentages say so rather than the section being withheld.
+	"catalog":   {"pvcs"},
+	"dataUsage": {"pvcs", "volumeSnapshots", "k10Reports"},
+	// The licence secrets are the only source; nothing else in the cluster states
+	// the entitlement. A denied read there is the difference between "no licence
+	// installed" and "we could not look", and those lead opposite ways.
+	"license": {"licenseSecrets"},
+	// The reporting policy's own health: whether it exists, and whether its runs
+	// are succeeding.
+	"reportsPolicy": {"policies", "reportActions"},
+}
+
+// buildTimeDeclarations names the sections declared by Build rather than from
+// sectionInputs, because whether they were computed is not a property of one
+// read. Kept beside the table so DeclarableSections can report the whole
+// vocabulary in one place.
+var buildTimeDeclarations = []string{
+	"k10Configuration", "catalog.freeSpacePercent", "ransomwareReadiness", "bestPractices",
+}
+
+// DeclarableSections is every name this collector can put in
+// unpopulatedSections.
+//
+// It is exported because it is a contract with the consumers, not an
+// implementation detail: kdl diff and the HTML renderer each guard sections by
+// name, and a guard on a name the producer can never emit is dead code that
+// looks like a safety net. Thirteen renderer guards and seven diff guards were
+// exactly that. Tests in both packages now check their names against this set.
+func DeclarableSections() map[string]bool {
+	out := make(map[string]bool, len(sectionInputs)+len(buildTimeDeclarations))
+	for section := range sectionInputs {
+		out[section] = true
 	}
+	for _, section := range buildTimeDeclarations {
+		out[section] = true
+	}
+	return out
+}
+
+// unpopulatedFor is the list declared in one report: the sections this build
+// cannot compute at all, plus the ones it can but whose input this run did not
+// return.
+func unpopulatedFor(res Result, declared []string) []string {
+	out := UnpopulatedSections()
+
+	degraded := append([]string(nil), declared...)
+	for section, inputs := range sectionInputs {
+		for _, key := range inputs {
+			if c, present := res.Collections[key]; !present || (!c.OK() && !c.Absent) {
+				degraded = append(degraded, section)
+				break
+			}
+		}
+	}
+	sort.Strings(degraded)
+	return append(out, degraded...)
 }
 
 // buildRBACLimited records denied reads as a first-class result. Without it a
@@ -493,6 +654,38 @@ func buildNamespaces(res Result, r *kdl.Report) {
 	}
 }
 
+// csiProvisionerPattern matches a CSI provisioner name, mirroring KDL.sh's
+// `test("\\.csi\\.|csi\\."; "i")`: in-tree provisioners cannot take CSI
+// snapshots and must not be reported as missing a snapshot class they never use.
+var csiProvisionerPattern = regexp.MustCompile(`(?i)(\.csi\.|csi\.)`)
+
+func isCSIProvisioner(provisioner string) bool {
+	return csiProvisionerPattern.MatchString(provisioner)
+}
+
+// importProfile resolves the profile an import policy pulls from. It reads the
+// raw object because importParameters is not modelled on the typed policy.
+func importProfile(res Result, policyName string) string {
+	for _, o := range res.Items("policies") {
+		if name(o) != policyName {
+			continue
+		}
+		for _, a := range slice(o.Object, "spec", "actions") {
+			am, ok := a.(map[string]any)
+			if !ok {
+				continue
+			}
+			if verb, _ := str(am, "action"); verb != "import" {
+				continue
+			}
+			if v, found := str(am, "importParameters", "profile", "name"); found {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
 // systemNamespacePattern is KDL.sh's SYSTEM_NS_PATTERNS, copied verbatim.
 //
 // It is an *unanchored, case-insensitive* alternation on purpose: "monitoring"
@@ -559,9 +752,52 @@ func buildVirtualization(res Result, r *kdl.Report) {
 	if r.Platform == "OpenShift" {
 		r.Virtualization.Platform = "OpenShift Virtualization"
 	}
+	r.Virtualization.Version = kubeVirtVersion(res)
+}
+
+// kubeVirtVersion reads the virtualization stack's version off the KubeVirt CR.
+//
+// KDL.sh resolves it three ways -- the OpenShift Virtualization CSV, a Harvester
+// setting, then the KubeVirt CR -- and only the third is reachable here: the other
+// two need reads that feed nothing else in the report. "unknown" is therefore the
+// honest answer on a cluster whose KubeVirt CR is not readable, and it is the word
+// KDL.sh uses for the same case.
+func kubeVirtVersion(res Result) string {
+	for _, o := range res.Items("kubeVirts") {
+		if v, ok := str(o.Object, "status", "observedKubeVirtVersion"); ok && v != "" {
+			return v
+		}
+	}
+	return "unknown"
+}
+
+// buildVirtualizationConfig fills the two virtualization values that live in
+// K10's configuration rather than on any VM, so it runs after the config is
+// loaded.
+//
+// Both matter operationally: the freeze timeout is how long Kasten waits for the
+// guest agent before falling back to a crash-consistent snapshot, and the
+// concurrency limit is why a hundred-VM cluster takes all night.
+func buildVirtualizationConfig(r *kdl.Report, cfg installConfig) {
+	if r.Virtualization.TotalVMs == 0 && r.Virtualization.Platform == "" {
+		return
+	}
+	r.Virtualization.FreezeConfiguration.Timeout =
+		cfg.strOr("kubeVirtVMs.snapshot.unfreezeTimeout", "5m0s")
+	r.Virtualization.SnapshotConcurrency =
+		cfg.strOr("limiter.vmSnapshotsPerCluster", "1")
 }
 
 func buildStorage(res Result, r *kdl.Report) {
+	// rbacAccessible is a claim about the read, and it has to be made explicitly:
+	// left at its zero value it says "denied" on every report, and the renderer
+	// then hides the classes it did collect behind an RBAC warning that describes
+	// nothing that happened. Absent counts as accessible -- a cluster with no CSI
+	// snapshot support serves no VolumeSnapshotClasses, and that is not a denial.
+	scRead, vscRead := res.Get("storageClasses"), res.Get("volumeSnapshotClasses")
+	r.StorageClasses.RBACAccessible = scRead.OK() || scRead.Absent
+	r.VolumeSnapshotClasses.RBACAccessible = vscRead.OK() || vscRead.Absent
+
 	if c := res.Get("storageClasses"); c.OK() {
 		items := make([]kdl.StorageClassesItem, 0, len(c.Items))
 		def := 0
@@ -606,6 +842,31 @@ func buildStorage(res Result, r *kdl.Report) {
 		r.VolumeSnapshotClasses.Items = items
 		r.VolumeSnapshotClasses.Count = len(items)
 		r.VolumeSnapshotClasses.DefaultCount = def
+
+		// A CSI provisioner with no matching VolumeSnapshotClass cannot be backed
+		// up through CSI snapshots at all -- it needs a Kanister blueprint or
+		// generic volume backup instead -- and that is one of the most frequent
+		// root causes of a backup that fails on one storage class only. Both reads
+		// are needed, so it is computed here rather than in either branch alone.
+		if scRead.OK() {
+			withClass := map[string]bool{}
+			for _, vsc := range items {
+				withClass[vsc.Driver] = true
+			}
+			missing := make([]string, 0)
+			seen := map[string]bool{}
+			for _, sc := range r.StorageClasses.Items {
+				if !isCSIProvisioner(sc.Provisioner) || withClass[sc.Provisioner] || seen[sc.Provisioner] {
+					continue
+				}
+				seen[sc.Provisioner] = true
+				missing = append(missing, sc.Provisioner)
+			}
+			sort.Strings(missing)
+			r.VolumeSnapshotClasses.CSIDriversWithoutVSC = kdl.VolumeSnapshotClassesCSIDriversWithoutVSC{
+				Count: len(missing), Drivers: missing,
+			}
+		}
 	}
 }
 
@@ -730,6 +991,10 @@ func buildRBACInventory(res Result, r *kdl.Report) {
 
 	if crb.OK() {
 		subjects := map[string]kdl.K10RBACSubjectsItem{}
+		// The bindings themselves, not only their count: a count says somebody has
+		// access, the list says who through which role, which is the whole point of
+		// an RBAC inventory in an audit.
+		bindingItems := make([]kdl.K10RBACClusterRoleBindingsItem, 0)
 		count := 0
 		for _, o := range crb.Items {
 			roleRef, _ := str(o.Object, "roleRef", "name")
@@ -737,6 +1002,11 @@ func buildRBACInventory(res Result, r *kdl.Report) {
 				continue
 			}
 			count++
+			binding := kdl.K10RBACClusterRoleBindingsItem{
+				Name:     name(o),
+				RoleRef:  roleRef,
+				Subjects: make([]kdl.K10RBACClusterRoleBindingsItemSubject, 0),
+			}
 			for _, s := range slice(o.Object, "subjects") {
 				sm, ok := s.(map[string]any)
 				if !ok {
@@ -748,13 +1018,20 @@ func buildRBACInventory(res Result, r *kdl.Report) {
 					continue
 				}
 				item := kdl.K10RBACSubjectsItem{Kind: kind, Name: nm}
+				bound := kdl.K10RBACClusterRoleBindingsItemSubject{Kind: kind, Name: nm}
 				if ns, ok := str(sm, "namespace"); ok {
 					item.Namespace = &ns
+					bound.Namespace = &ns
 				}
 				subjects[kind+"/"+nm] = item
+				binding.Subjects = append(binding.Subjects, bound)
 			}
+			bindingItems = append(bindingItems, binding)
 		}
-		r.K10RBAC.ClusterRoleBindings = kdl.K10RBACClusterRoleBindings{Count: count}
+		sort.Slice(bindingItems, func(i, j int) bool { return bindingItems[i].Name < bindingItems[j].Name })
+		r.K10RBAC.ClusterRoleBindings = kdl.K10RBACClusterRoleBindings{
+			Count: count, Items: bindingItems,
+		}
 
 		keys := make([]string, 0, len(subjects))
 		for k := range subjects {
@@ -777,10 +1054,47 @@ func buildRBACInventory(res Result, r *kdl.Report) {
 	}
 
 	if roles.OK() {
-		r.K10RBAC.Roles = kdl.K10RBACRoles{Count: len(roles.Items)}
+		items := make([]kdl.K10RBACRolesItem, 0, len(roles.Items))
+		for _, o := range roles.Items {
+			items = append(items, kdl.K10RBACRolesItem{
+				Name:       name(o),
+				Namespace:  namespace(o),
+				RulesCount: len(slice(o.Object, "rules")),
+			})
+		}
+		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+		r.K10RBAC.Roles = kdl.K10RBACRoles{Count: len(items), Items: items}
 	}
 	if rb.OK() {
-		r.K10RBAC.RoleBindings = kdl.K10RBACRoleBindings{Count: len(rb.Items)}
+		items := make([]kdl.K10RBACRoleBindingsItem, 0, len(rb.Items))
+		for _, o := range rb.Items {
+			roleRef, _ := str(o.Object, "roleRef", "name")
+			binding := kdl.K10RBACRoleBindingsItem{
+				Name:      name(o),
+				Namespace: namespace(o),
+				RoleRef:   roleRef,
+				Subjects:  make([]kdl.K10RBACRoleBindingsItemSubject, 0),
+			}
+			for _, s := range slice(o.Object, "subjects") {
+				sm, ok := s.(map[string]any)
+				if !ok {
+					continue
+				}
+				kind, _ := str(sm, "kind")
+				nm, _ := str(sm, "name")
+				if kind == "" || nm == "" {
+					continue
+				}
+				bound := kdl.K10RBACRoleBindingsItemSubject{Kind: kind, Name: nm}
+				if ns, ok := str(sm, "namespace"); ok {
+					bound.Namespace = &ns
+				}
+				binding.Subjects = append(binding.Subjects, bound)
+			}
+			items = append(items, binding)
+		}
+		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+		r.K10RBAC.RoleBindings = kdl.K10RBACRoleBindings{Count: len(items), Items: items}
 	}
 }
 
@@ -835,6 +1149,30 @@ func buildHealth(res Result, r *kdl.Report) {
 	if c := res.Get("restorePoints"); c.OK() {
 		r.Health.Backups.RestorePoints = len(c.Items)
 	}
+
+	// The five most recent restores, whatever their state. A restore is an
+	// operator action, so the list answers "who restored what, lately" -- and the
+	// namespace is resolved through the same chain as the failed-actions list, so
+	// one restore does not report two different namespaces in two sections.
+	recent := make([]kdl.HealthBackupsRestoreActionsRecentItem, 0)
+	for _, o := range res.Items("restoreActions") {
+		recent = append(recent, kdl.HealthBackupsRestoreActionsRecentItem{
+			Name:            name(o),
+			Timestamp:       creationTimestamp(o),
+			State:           strOr(o.Object, "Unknown", "status", "state"),
+			TargetNamespace: actionDisplayNamespace(o, "RestoreAction"),
+		})
+	}
+	sort.Slice(recent, func(i, j int) bool {
+		if recent[i].Timestamp != recent[j].Timestamp {
+			return recent[i].Timestamp > recent[j].Timestamp
+		}
+		return recent[i].Name < recent[j].Name
+	})
+	if len(recent) > maxActionListItems {
+		recent = recent[:maxActionListItems]
+	}
+	r.Health.Backups.RestoreActions.Recent = recent
 }
 
 type actionCounts struct{ total, complete, failed, running, other int }
@@ -896,7 +1234,18 @@ func buildMisc(res Result, r *kdl.Report) {
 		r.Kanister.Blueprints = kdl.KanisterBlueprints{Count: len(items), Items: items}
 	}
 	if c := res.Get("blueprintBindings"); c.OK() {
-		r.Kanister.Bindings.Count = len(c.Items)
+		items := make([]kdl.KanisterBindingsItem, 0, len(c.Items))
+		for _, o := range c.Items {
+			// The binding names the blueprint it applies; a count without it says a
+			// binding exists but not what it binds, which is the whole question.
+			items = append(items, kdl.KanisterBindingsItem{
+				Name:      name(o),
+				Namespace: namespace(o),
+				Blueprint: strOr(o.Object, "", "spec", "blueprint"),
+			})
+		}
+		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+		r.Kanister.Bindings = kdl.KanisterBindings{Count: len(items), Items: items}
 	}
 
 	if c := res.Get("policyPresets"); c.OK() {
@@ -925,7 +1274,7 @@ func buildMisc(res Result, r *kdl.Report) {
 				freq = *p.Frequency
 			}
 			r.ImportPolicies.Items = append(r.ImportPolicies.Items, kdl.ImportPoliciesItem{
-				Name: p.Name, Frequency: freq,
+				Name: p.Name, Frequency: freq, Profile: importProfile(res, p.Name),
 			})
 		}
 		if !hasAction(p.Actions, "export") {
@@ -1072,12 +1421,233 @@ func buildPolicyAnalysis(res Result, r *kdl.Report) {
 		}
 	}
 
-	r.PolicyAnalysis.Summary = kdl.PolicyAnalysisSummary{
-		TotalPolicies:          analysed,
-		EmptyCount:             len(r.PolicyAnalysis.EmptyPolicies),
-		WithNonExistingNSCount: len(r.PolicyAnalysis.PoliciesWithNonExistingReferences),
+	// One entry per analysed policy, with what its selector actually resolved to.
+	// It is the section's raw material: every other list here is a subset of it, and
+	// without it a reader cannot see why a policy was called empty.
+	resolved := make([]kdl.PolicyAnalysisResolvedItem, 0)
+	for _, p := range r.Policies.Items {
+		if isSystemPolicy(p.Name) {
+			continue
+		}
+		targeted := p.Selector.TargetPatterns()
+		matched, missing := resolveTargets(p, existing)
+		item := kdl.PolicyAnalysisResolvedItem{
+			Name:                  p.Name,
+			Actions:               p.Actions,
+			Frequency:             p.Frequency,
+			SelectorKind:          selectorKind(p.Selector),
+			Resolvable:            !p.Selector.Unrecognized(),
+			TargetedNamespaces:    matched,
+			NonExistingReferences: missing,
+			TargetedCount:         len(targeted),
+			EffectiveCount:        len(matched),
+			IsEmpty:               len(matched) == 0 && len(targeted) > 0,
+		}
+		if p.Selector.All {
+			// A catch-all targets everything, so "targeted" is not a pattern count.
+			item.TargetedCount = len(matched)
+		}
+		resolved = append(resolved, item)
 	}
-	r.PolicyAnalysis.Note = "App policies only (system DR/reports policies excluded). Redundancy analysis is not computed by the Go collector yet."
+	sort.Slice(resolved, func(i, j int) bool { return resolved[i].Name < resolved[j].Name })
+	r.PolicyAnalysis.Resolved = resolved
+
+	genuine, withCatchall := buildRedundantPairs(r, existing)
+
+	r.PolicyAnalysis.Summary = kdl.PolicyAnalysisSummary{
+		TotalPolicies:              analysed,
+		EmptyCount:                 len(r.PolicyAnalysis.EmptyPolicies),
+		WithNonExistingNSCount:     len(r.PolicyAnalysis.PoliciesWithNonExistingReferences),
+		RedundantPairCount:         len(r.PolicyAnalysis.RedundantPairs),
+		RedundantPairsGenuine:      genuine,
+		RedundantPairsWithCatchall: withCatchall,
+	}
+	r.PolicyAnalysis.Note = "Scope: app policies only (system DR/reports excluded). " +
+		"Empty = selector resolves to 0 existing namespaces. Redundant = pair of policies " +
+		"sharing >=1 namespace AND >=1 action. Pairs flagged involvesCatchall=true are " +
+		"by-design when a catch-all policy exists; genuine pairs are the actionable subset."
+}
+
+// buildRedundantPairs finds pairs of policies that back up the same namespace
+// with the same action.
+//
+// The catch-all split is what makes the section usable rather than noise. On a
+// cluster with one catch-all policy, every other policy overlaps it by
+// construction, so a raw pair count grows with the number of policies and says
+// nothing: a 30-policy cluster reports 29 pairs and no action to take. A pair of
+// two *specific* policies overlapping is the actionable finding -- somebody is
+// paying for two snapshots of the same namespace -- so the two counts are kept
+// apart and the report says which is which.
+// resolveTargets returns the existing namespaces a policy selects, and the
+// literal references that match nothing. An unmatched glob is an empty match
+// rather than a typo, so only literals are reported as non-existing.
+func resolveTargets(p kdl.PoliciesItem, existing map[string]bool) (matched, missing []string) {
+	matched, missing = make([]string, 0), make([]string, 0)
+	excluded := p.Selector.ExcludedNamespacePatterns()
+
+	if p.Selector.All {
+		for ns := range existing {
+			if !kdl.GlobAny(excluded, ns) {
+				matched = append(matched, ns)
+			}
+		}
+		sort.Strings(matched)
+		return matched, missing
+	}
+
+	seen := map[string]bool{}
+	for _, pattern := range p.Selector.NamespacePatterns() {
+		hit := false
+		for ns := range existing {
+			if !kdl.GlobMatch(pattern, ns) || kdl.GlobAny(excluded, ns) {
+				continue
+			}
+			hit = true
+			if !seen[ns] {
+				seen[ns] = true
+				matched = append(matched, ns)
+			}
+		}
+		if !hit && !strings.ContainsAny(pattern, "*?") {
+			missing = append(missing, pattern)
+		}
+	}
+	sort.Strings(matched)
+	sort.Strings(missing)
+	return matched, missing
+}
+
+func buildRedundantPairs(r *kdl.Report, existing map[string]bool) (genuine, withCatchall int) {
+	// Resolve each policy to the namespaces it actually selects, once. Doing it
+	// inside the pair loop would be quadratic in namespaces as well as policies.
+	type resolved struct {
+		item       kdl.PoliciesItem
+		namespaces map[string]bool
+		catchall   bool
+	}
+	var policies []resolved
+	for _, p := range r.Policies.Items {
+		if isSystemPolicy(p.Name) || p.EffectiveScope() != kdl.ScopeNamespace {
+			continue
+		}
+		selected := map[string]bool{}
+		excluded := p.Selector.ExcludedNamespacePatterns()
+		for ns := range existing {
+			if kdl.GlobAny(excluded, ns) {
+				continue
+			}
+			if p.Selector.All || kdl.GlobAny(p.Selector.NamespacePatterns(), ns) {
+				selected[ns] = true
+			}
+		}
+		policies = append(policies, resolved{item: p, namespaces: selected, catchall: p.Selector.All})
+	}
+
+	for i := 0; i < len(policies); i++ {
+		for j := i + 1; j < len(policies); j++ {
+			a, b := policies[i], policies[j]
+
+			shared := make([]string, 0)
+			for ns := range a.namespaces {
+				if b.namespaces[ns] {
+					shared = append(shared, ns)
+				}
+			}
+			if len(shared) == 0 {
+				continue
+			}
+			sharedActions := intersect(a.item.Actions, b.item.Actions)
+			if len(sharedActions) == 0 {
+				continue
+			}
+			sort.Strings(shared)
+
+			pair := kdl.PolicyAnalysisRedundantPair{
+				Policies:             []string{a.item.Name, b.item.Name},
+				SharedActions:        sharedActions,
+				SameFrequency:        sameFrequency(a.item, b.item),
+				InvolvesCatchall:     a.catchall || b.catchall,
+				SharedNamespaceCount: len(shared),
+				SharedNamespaces:     shared,
+			}
+			if pair.InvolvesCatchall {
+				withCatchall++
+			} else {
+				genuine++
+			}
+			r.PolicyAnalysis.RedundantPairs = append(r.PolicyAnalysis.RedundantPairs, pair)
+		}
+	}
+	sort.Slice(r.PolicyAnalysis.RedundantPairs, func(i, j int) bool {
+		x, y := r.PolicyAnalysis.RedundantPairs[i], r.PolicyAnalysis.RedundantPairs[j]
+		if x.Policies[0] != y.Policies[0] {
+			return x.Policies[0] < y.Policies[0]
+		}
+		return x.Policies[1] < y.Policies[1]
+	})
+	return genuine, withCatchall
+}
+
+// intersect returns the actions two policies share, sorted.
+func intersect(a, b []string) []string {
+	in := make(map[string]bool, len(b))
+	for _, v := range b {
+		in[v] = true
+	}
+	var out []string
+	for _, v := range a {
+		if in[v] {
+			out = append(out, v)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sameFrequency reports whether two policies run on the same schedule. Two
+// policies overlapping on different schedules may well be deliberate -- a daily
+// and a monthly copy of the same namespace -- so the flag lets a reader tell
+// duplication from a retention tier.
+func sameFrequency(a, b kdl.PoliciesItem) bool {
+	if a.Frequency == nil || b.Frequency == nil {
+		return a.Frequency == nil && b.Frequency == nil
+	}
+	return *a.Frequency == *b.Frequency
+}
+
+// buildReportsPolicy reports whether K10's own reporting policy exists and is
+// running. It is the prerequisite for the export-storage figures in dataUsage,
+// so a reader seeing those absent can find out here why.
+func buildReportsPolicy(res Result, r *kdl.Report) {
+	const reportsPolicyName = "k10-system-reports-policy"
+
+	rp := &r.ReportsPolicy
+	rp.Frequency = naValue
+	rp.LastRun = kdl.ReportsPolicyLastRun{State: naValue, Timestamp: naValue}
+	rp.Note = "The reporting policy produces the export-storage and licensing figures; " +
+		"without it those are absent rather than zero."
+
+	for _, o := range res.Items("policies") {
+		if name(o) != reportsPolicyName {
+			continue
+		}
+		rp.Exists = true
+		rp.Frequency = strOr(o.Object, "manual", "spec", "frequency")
+		break
+	}
+
+	actions := res.Items("reportActions")
+	rp.ReportActionsCount = len(actions)
+	newest := ""
+	for _, o := range actions {
+		if ts := creationTimestamp(o); ts >= newest {
+			newest = ts
+			rp.LastRun = kdl.ReportsPolicyLastRun{
+				State:     strOr(o.Object, "Unknown", "status", "state"),
+				Timestamp: ts,
+			}
+		}
+	}
 }
 
 // labelsMatch reports whether every required label is present with the required

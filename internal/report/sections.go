@@ -7,46 +7,68 @@ import (
 	"github.com/BertV44/Kasten-Discovery/internal/schema"
 )
 
+// GuardedSections lists the report sections this renderer replaces with a
+// not-collected note when the producer declares them uncomputed.
+//
+// Exported for one reason: a guard on a name the producer can never emit is dead
+// code that looks like a safety net, and thirteen of these were exactly that. The
+// test that checks this set against scan.DeclarableSections is what turns the next
+// such mismatch into a failing build.
+func GuardedSections() []string {
+	var out []string
+	for _, s := range buildSections(&schema.Report{}, nil, RansomwareView{}, PolicyView{}, ProfileView{}, RPOView{}) {
+		out = append(out, s.guards...)
+	}
+	return out
+}
+
 // buildSections returns every report section in the order kdl-json-to-html.sh
 // renders them. The sidebar nav is built client-side from the h2 headings, so this
 // order is also the nav order.
 func buildSections(r *schema.Report, checks []Check, ransom RansomwareView, policies PolicyView, profiles ProfileView, rpo RPOView) []Section {
+	// Each section names the report section(s) it renders, so one the producer
+	// declared uncomputed says so instead of presenting its zero values as
+	// findings. See Section.from.
 	return []Section{
-		bestPracticesSection(checks),
-		multiClusterSection(r),
-		drSection(r),
-		immutabilitySection(r),
-		policyRunStatsSection(r),
-		namespaceProtectionSection(r),
-		virtualizationSection(r),
-		restoreHistorySection(r),
-		k10ResourcesSection(r),
-		catalogSection(r),
-		orphanedRestorePointsSection(r),
-		licenseSection(r),
-		healthSection(r),
-		failedActionsSection(r),
-		monitoringSection(r),
-		dataUsageSection(r),
-		profilesSection(profiles),
-		policiesSection(policies),
-		kanisterSection(r),
-		transformSetsSection(r),
-		k10ConfigurationSection(r),
-		ransomwareSection(ransom),
-		rpoSection(rpo),
-		policyAnalysisSection(r),
+		bestPracticesSection(checks).from(r, "bestPractices"),
+		multiClusterSection(r).from(r, "multiCluster"),
+		drSection(r).from(r, "disasterRecovery"),
+		immutabilitySection(r).from(r, "profiles"),
+		policyRunStatsSection(r).from(r, "policyRunStats.lastRuns", "policyRunStats.averageDuration"),
+		namespaceProtectionSection(r).from(r, "coverage"),
+		virtualizationSection(r).from(r, "virtualization"),
+		restoreHistorySection(r).from(r, "health"),
+		k10ResourcesSection(r).from(r, "k10Resources"),
+		catalogSection(r).from(r, "catalog"),
+		orphanedRestorePointsSection(r).from(r, "orphanedRestorePoints"),
+		licenseSection(r).from(r, "license"),
+		healthSection(r).from(r, "health"),
+		failedActionsSection(r).from(r, "failedActionsTop5"),
+		monitoringSection(r).from(r, "monitoring"),
+		dataUsageSection(r).from(r, "dataUsage"),
+		profilesSection(profiles).from(r, "profiles"),
+		policiesSection(policies).from(r, "policies"),
+		kanisterSection(r).from(r, "kanister"),
+		transformSetsSection(r).from(r, "transformSets"),
+		k10ConfigurationSection(r).from(r, "k10Configuration"),
+		ransomwareSection(ransom).from(r, "ransomwareReadiness"),
+		rpoSection(rpo).from(r, "policyRunStats.effectiveRpo"),
+		policyAnalysisSection(r).from(r, "policyAnalysis"),
+		// k10Rbac carries its own accessibility flags and renders a "⚠ Partial --
+		// some RBAC reads denied" row, so it is deliberately NOT guarded here:
+		// declaring the section would hide the roles that WERE read, along with the
+		// note explaining what is missing. Self-describing beats withheld.
 		k10RBACSection(r),
-		retentionAnalysisSection(r),
-		policiesWithoutExportSection(r),
-		profileValidationSection(r),
-		storageClassesSection(r),
-		volumeSnapshotClassesSection(r),
-		stuckActionsSection(r),
-		namespaceStatusSection(r),
-		restorePointsByNamespaceSection(r),
-		importPoliciesSection(r),
-		reportsPolicySection(r),
+		retentionAnalysisSection(r).from(r, "retentionAnalysis"),
+		policiesWithoutExportSection(r).from(r, "policiesWithoutExport"),
+		profileValidationSection(r).from(r, "profileValidation"),
+		storageClassesSection(r).from(r, "storageClasses"),
+		volumeSnapshotClassesSection(r).from(r, "volumeSnapshotClasses"),
+		stuckActionsSection(r).from(r, "stuckActions"),
+		namespaceStatusSection(r).from(r, "namespaceProtectionStatus"),
+		restorePointsByNamespaceSection(r).from(r, "restorePointsByNamespace"),
+		importPoliciesSection(r).from(r, "importPolicies"),
+		reportsPolicySection(r).from(r, "reportsPolicy"),
 	}
 }
 
@@ -63,11 +85,28 @@ func multiClusterSection(r *schema.Report) Section {
 	return Section{
 		Title:     "🌐 Multi-Cluster Configuration",
 		CardClass: "mc-card",
-		Rows: []Row{
+		Rows: nonEmptyRows([]Row{
 			badgeRow("Role", class, strings.ToUpper(mc.Role)),
-			row("Managed Clusters", itoa(mc.ClusterCount)),
-		},
+			// Only a primary manages clusters, so the row is absent rather than zero
+			// elsewhere -- nonEmptyRows drops it.
+			row("Managed Clusters", clusterCountText(mc.ClusterCount)),
+			// Only a secondary carries these, and on a secondary they are the
+			// section's whole point: they name the cluster whose policies this
+			// one is executing. Both went unrendered while untyped.
+			row("Primary Cluster", deref(mc.PrimaryName, "")),
+			row("Cluster ID", deref(mc.ClusterID, "")),
+		}),
 	}
+}
+
+// clusterCountText renders the managed-cluster count, empty when the report
+// carries none: a primary with zero joined clusters and a cluster with no primary
+// role at all are different facts, and only the first is a count.
+func clusterCountText(n *int) string {
+	if n == nil {
+		return ""
+	}
+	return itoa(*n)
 }
 
 func drSection(r *schema.Report) Section {
@@ -135,11 +174,18 @@ func policyRunStatsSection(r *schema.Report) Section {
 			})
 			continue
 		}
+		// A run that recorded no duration -- still in flight, or missing a
+		// start or end time -- prints as unknown rather than as a zero-length
+		// backup.
+		duration := naValue
+		if p.LastRun.Duration != nil {
+			duration = formatDuration(float64(*p.LastRun.Duration))
+		}
 		t.Rows = append(t.Rows, []Cell{
 			boldCell(p.Name),
 			dateCell(p.LastRun.Timestamp),
 			stateCell(p.LastRun.State),
-			cell(formatDuration(float64(p.LastRun.Duration))),
+			cell(duration),
 		})
 	}
 
@@ -453,26 +499,40 @@ func k10ResourcesSection(r *schema.Report) Section {
 
 func catalogSection(r *schema.Report) Section {
 	c := r.Catalog
-	class := "ok"
-	switch {
-	case c.FreeSpacePercent < 10:
-		class = "error"
-	case c.FreeSpacePercent < 25:
-		class = "warn"
-	}
-	return Section{
+	s := Section{
 		Title: "📁 Catalog",
 		Rows: []Row{
 			row("PVC Name", c.PVCName),
 			row("Size", c.Size),
-			{
-				Label:  "Free Space",
-				Badge:  &Badge{Class: class, Text: fmt.Sprintf("%d%%", c.FreeSpacePercent)},
-				Suffix: fmt.Sprintf("(Used: %d%%)", c.UsedPercent),
-			},
 		},
-		Progress: &Progress{Percent: c.UsedPercent},
 	}
+
+	// Free space is measured by running df inside the catalog pod, which not
+	// every producer can do. Printing 0% there is the most alarming line this
+	// section can carry, and it would be describing a measurement nobody took.
+	if c.FreeSpacePercent == nil {
+		s.Rows = append(s.Rows, row("Free Space", "not measured"))
+		return s
+	}
+
+	free := *c.FreeSpacePercent
+	class := "ok"
+	switch {
+	case free < 10:
+		class = "error"
+	case free < 25:
+		class = "warn"
+	}
+	usedRow := Row{
+		Label: "Free Space",
+		Badge: &Badge{Class: class, Text: fmt.Sprintf("%d%%", free)},
+	}
+	if c.UsedPercent != nil {
+		usedRow.Suffix = fmt.Sprintf("(Used: %d%%)", *c.UsedPercent)
+		s.Progress = &Progress{Percent: *c.UsedPercent}
+	}
+	s.Rows = append(s.Rows, usedRow)
+	return s
 }
 
 func orphanedRestorePointsSection(r *schema.Report) Section {
@@ -801,6 +861,12 @@ func k10ConfigurationSection(r *schema.Report) Section {
 		encryption = "None"
 	}
 
+	// The KMS provider on its own does not say which key: "AWS KMS" is the same
+	// string whether a CMK is configured or the details were never read.
+	if d := deref(sec.Encryption.Details, ""); d != "" {
+		encryption += " (" + d + ")"
+	}
+
 	security := []Row{
 		// Details is provenance ("detected from secret"), not part of the method.
 		row("Authentication", sec.Authentication.Method),
@@ -808,8 +874,13 @@ func k10ConfigurationSection(r *schema.Report) Section {
 		yesNoRow("FIPS Mode", sec.FIPSMode, true),
 		yesNoRow("Network Policies", sec.NetworkPolicies, true),
 		yesNoRow("Audit Logging", sec.AuditLogging.Enabled, true),
+		// Where the audit trail goes is the operational half of "audit logging is
+		// on": a trail written to stdout on a cluster with no log shipping does
+		// not survive the incident it exists for.
+		row("Audit Targets", deref(sec.AuditLogging.Targets, "")),
 		yesNoRow("SCC", sec.Scc, true),
 		yesNoRow("VAP", sec.Vap, true),
+		row("Custom CA Certificate", deref(sec.CustomCACertificate, "")),
 		row("Security Context (runAsUser)", sec.SecurityContext.RunAsUser),
 		row("Security Context (fsGroup)", sec.SecurityContext.FsGroup),
 	}
@@ -862,6 +933,7 @@ func k10ConfigurationSection(r *schema.Report) Section {
 		row("Jobs", pe.JobsSize),
 		row("Logging", pe.LoggingSize),
 		row("Metering", pe.MeteringSize),
+		row("Storage Class", deref(pe.StorageClass, "cluster default")),
 	}
 
 	gc := c.GarbageCollector
@@ -872,6 +944,15 @@ func k10ConfigurationSection(r *schema.Report) Section {
 		row("Log Level", c.LogLevel),
 		row("Dashboard Access", c.DashboardAccess.Method),
 		row("Dashboard Host", c.DashboardAccess.Host),
+		row("Cluster Name", deref(c.ClusterName, "")),
+	}
+
+	// Which settings somebody chose, as opposed to which ones K10 defaulted. It
+	// is the one line that makes the four tables above readable at a glance, and
+	// it went unrendered while the field was untyped.
+	if nd := c.NonDefaultSettings; nd.Count > 0 {
+		other = append(other, row("Tuned Settings",
+			fmt.Sprintf("%d (%s)", nd.Count, deref(nd.Items, ""))))
 	}
 
 	s := Section{
@@ -1139,9 +1220,16 @@ func retentionAnalysisSection(r *schema.Report) Section {
 			ra.ExportWithoutExplicitRetention.Items...))
 	}
 	if ra.SnapshotRetentionHigh.Count > 0 {
+		// Naming the policies and the tier that tripped the threshold: the count
+		// alone was unactionable, which is what this list looked like while its
+		// element type was unmodelled.
+		items := make([]string, 0, len(ra.SnapshotRetentionHigh.Items))
+		for _, it := range ra.SnapshotRetentionHigh.Items {
+			items = append(items, fmt.Sprintf("%s (max %d)", it.Name, it.Max))
+		}
 		s.Boxes = append(s.Boxes, infoBox(fmt.Sprintf(
 			"ℹ %d policy(ies) keep a high number of local snapshots. %s",
-			ra.SnapshotRetentionHigh.Count, ra.SnapshotRetentionHigh.Note)))
+			ra.SnapshotRetentionHigh.Count, ra.SnapshotRetentionHigh.Note), items...))
 	}
 	if len(s.Boxes) == 0 {
 		if r.Policies.Count == 0 {

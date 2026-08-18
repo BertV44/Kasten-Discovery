@@ -20,14 +20,29 @@
 //   - Parallel fetches with per-resource error capture, so one denied read costs
 //     one section rather than the whole scan.
 //
-// # What this collector does not do yet
+// # What this collector leaves empty, and how it says so
 //
-// It populates the inventory and the two analyses that the typed schema already
-// knows how to compute (coverage, policy analysis). The scoring sections --
-// ransomware readiness, the 16 best-practice checks, effective RPO -- are not
-// computed; UnpopulatedSections lists them, and `kdl scan` prints that list on
-// every run. This is deliberate: those sections are verdicts, and a verdict
-// computed over a partially collected cluster is worse than an absent one.
+// It computes every section of the report. What it cannot do is compute them from
+// reads that did not happen, and the machinery for saying so is the part worth
+// understanding before changing anything here:
+//
+//   - sectionInputs names what each section cannot be right without. A section
+//     whose input was denied or failed is listed in the report's
+//     unpopulatedSections for that run, `kdl diff` skips it, and the HTML renderer
+//     replaces it with a note. Every name a consumer guards on must be a name this
+//     package can emit -- DeclarableSections is that contract, and a test in this
+//     package checks both consumers against it.
+//   - The 16 best-practice checks answer NOT_ASSESSED rather than passing or
+//     failing when their input was not read, because a check that fails because
+//     nobody looked paints "✗ CRITICAL" on the report's front page.
+//   - The ransomware grade is withheld entirely when any pillar's input is
+//     missing. It is one number, and there is no room in it for "partly unknown":
+//     a pillar scored zero for lack of evidence reads as a failed control.
+//
+// One figure is conditional rather than computed: catalog free space comes from
+// the kubelet's volume stats, which needs get on nodes/proxy -- not a permission
+// K10 itself requires. Absent it, the percentages stay null and
+// catalog.freeSpacePercent is declared.
 //
 // # Unvalidated against a live cluster
 //
@@ -49,6 +64,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 // Run is the entry point for `kdl scan`.
@@ -61,6 +78,12 @@ func Run(args []string) error {
 	timeout := fs.Duration("timeout", 2*time.Minute, "overall time budget for the collection")
 	parallelism := fs.Int("parallelism", 8, "how many resources to fetch concurrently")
 	qps := fs.Float64("qps", 20, "client-side API request rate limit")
+	// -no-helm stops the Helm release from being read and decoded. It does not
+	// make the scan secret-free: the licence secrets are read namespace-wide, and
+	// that listing includes the release object's bytes whether or not anything
+	// looks at them. KDL.sh has the same property, and saying so here keeps the
+	// flag from being read as more of a guarantee than it is.
+	noHelm := fs.Bool("no-helm", false, "do not read or decode the Helm release object (K10 settings then come from the k10-config ConfigMap only)")
 	fs.Usage = func() {
 		fmt.Fprint(os.Stderr, `kdl scan -- collect a discovery report from a cluster (read-only)
 
@@ -75,6 +98,8 @@ Flags:
   -timeout duration  overall time budget (default: 2m)
   -parallelism n     concurrent resource fetches (default: 8)
   -qps n             client-side request rate limit (default: 20)
+  -no-helm           skip the Helm release read; settings come from the
+                     k10-config ConfigMap only, and the report says so
 
 This command never writes to the cluster.
 `)
@@ -97,13 +122,17 @@ This command never writes to the cluster.
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	res := Collect(ctx, reader, *kastenNS, *parallelism)
+	res := Collect(ctx, reader, Options{
+		KastenNamespace: *kastenNS,
+		Parallelism:     *parallelism,
+		SkipHelm:        *noHelm,
+	})
 
 	// A report in which every section is zero because the cluster was never
 	// reached is worse than no report: it looks like a cluster with nothing in
 	// it. Refuse before writing anything.
 	if res.TotalFailure() {
-		printSummary(os.Stderr, res, ScanVersion)
+		printSummary(os.Stderr, res, ScanVersion, UnpopulatedSections())
 		return fmt.Errorf("scan: every read failed -- the cluster was not reached; no report written")
 	}
 
@@ -126,7 +155,7 @@ This command never writes to the cluster.
 		fmt.Fprintf(os.Stderr, "[OK] report written: %s\n", *out)
 	}
 
-	printSummary(os.Stderr, res, report.KDLVersion)
+	printSummary(os.Stderr, res, report.KDLVersion, report.UnpopulatedSections)
 	return nil
 }
 
@@ -134,7 +163,7 @@ This command never writes to the cluster.
 // stdout. It states what was denied and what was not computed, because a reader
 // comparing this against a KDL.sh report needs to tell "nothing found" from
 // "never collected".
-func printSummary(w *os.File, res Result, version string) {
+func printSummary(w *os.File, res Result, version string, declared []string) {
 	fmt.Fprintf(w, "\nkdl scan (%s), Kubernetes %s, namespace %s\n",
 		version, orUnknown(res.KubernetesVersion), res.KastenNamespace)
 
@@ -161,8 +190,50 @@ func printSummary(w *os.File, res Result, version string) {
 		fmt.Fprintf(w, "\nNot served by this cluster (normal): %s\n", strings.Join(sorted(absent), ", "))
 	}
 
-	fmt.Fprintf(w, "\nSections this collector does not compute yet:\n  %s\n",
-		strings.Join(UnpopulatedSections(), ", "))
+	notImplemented := UnpopulatedSections()
+	if len(notImplemented) > 0 {
+		fmt.Fprintf(w, "\nSections this collector does not compute yet:\n  %s\n",
+			strings.Join(notImplemented, ", "))
+	}
+
+	// A section the collector *can* compute but whose input this run did not
+	// return is a different message, and the more urgent one: it is fixable by
+	// granting a permission or retrying, and until then the section is unknown
+	// rather than empty.
+	if skipped := without(declared, notImplemented); len(skipped) > 0 {
+		fmt.Fprintf(w, "\nNot populated in THIS report -- a read did not return, or was not granted:\n  %s\n",
+			strings.Join(skipped, ", "))
+	}
+	if err := res.VolumeStatsErr; err != nil {
+		// Said plainly rather than folded into the list above, because it is the
+		// one read whose absence is expected: get on nodes/proxy is not a
+		// permission K10 needs, so most clusters will not have granted it.
+		//
+		// The permission is named only when the error really is a refusal. A
+		// timeout or an unreachable kubelet would otherwise be reported as an RBAC
+		// problem, sending an operator to edit a role that was never the issue.
+		if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
+			fmt.Fprintf(w, "\nCatalog free space not measured: the scan may not read "+
+				"nodes/proxy. Grant `get` on it to include the figure.\n")
+		} else {
+			fmt.Fprintf(w, "\nCatalog free space not measured: %v\n", err)
+		}
+	}
+}
+
+// without returns the elements of a not present in b.
+func without(a, b []string) []string {
+	in := make(map[string]bool, len(b))
+	for _, s := range b {
+		in[s] = true
+	}
+	var out []string
+	for _, s := range a {
+		if !in[s] {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func orUnknown(s string) string {

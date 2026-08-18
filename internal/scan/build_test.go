@@ -1,9 +1,14 @@
 package scan
 
 import (
+	"os"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/BertV44/Kasten-Discovery/internal/diff"
+	"github.com/BertV44/Kasten-Discovery/internal/report"
 	kdl "github.com/BertV44/Kasten-Discovery/internal/schema"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -332,22 +337,75 @@ func TestExcludedNamespaceIsNotCountedProtected(t *testing.T) {
 
 // TestUnpopulatedSectionsIsHonest guards the one thing a user comparing this
 // against a KDL.sh report depends on: knowing which empty sections are "nothing
-// found" and which are "not implemented".
+// found" and which were never read.
+//
+// It checks the declaration in both directions, because either error is
+// expensive. Declaring a section that WAS computed makes kdl diff stop comparing
+// real data and blanks a real finding out of the page; failing to declare one
+// that was NOT computed is the misleading zero the whole mechanism exists to
+// prevent.
 func TestUnpopulatedSectionsIsHonest(t *testing.T) {
-	listed := UnpopulatedSections()
-	if len(listed) == 0 {
-		t.Fatal("UnpopulatedSections is empty; the collector does not yet fill every section")
-	}
-	r := buildFrom(t, map[string][]unstructured.Unstructured{})
-	// A section claimed as populated must not be in the not-implemented list.
-	for _, s := range listed {
-		if s == "policies" || s == "profiles" || s == "coverage" || s == "policyAnalysis" {
-			t.Errorf("%q is listed as unpopulated but the collector does fill it", s)
+	// A name that is not a real section silently disables its own declaration:
+	// NotCollected matches on the string, so a typo means nothing is ever
+	// declared for that section and no test would otherwise notice.
+	valid := topLevelSectionNames(t)
+	for section := range sectionInputs {
+		top, _, _ := strings.Cut(section, ".")
+		if !valid[top] {
+			t.Errorf("sectionInputs names %q, which is not a section of the report; "+
+				"its declaration can never match", section)
 		}
 	}
-	if r.KDLVersion != ScanVersion {
-		t.Errorf("kdlVersion = %q, want %q so a Go-collected report is identifiable", r.KDLVersion, ScanVersion)
+	for _, section := range UnpopulatedSections() {
+		top, _, _ := strings.Cut(section, ".")
+		if !valid[top] {
+			t.Errorf("UnpopulatedSections names %q, which is not a section of the report", section)
+		}
 	}
+
+	// A run where every read succeeded must declare nothing it actually computed.
+	healthy := buildFrom(t, sampleCluster())
+	for _, section := range []string{
+		"policies", "profiles", "coverage", "policyAnalysis", "health", "k10Rbac",
+		"failedActionsTop5", "stuckActions", "namespaceProtectionStatus",
+		"profileValidation", "retentionAnalysis", "disasterRecovery", "monitoring",
+		"reportsPolicy", "dataUsage", "license",
+	} {
+		if healthy.NotCollected(section) {
+			t.Errorf("%q is declared uncomputed on a run where every read succeeded", section)
+		}
+	}
+	if healthy.KDLVersion != ScanVersion {
+		t.Errorf("kdlVersion = %q, want %q so a Go-collected report is identifiable",
+			healthy.KDLVersion, ScanVersion)
+	}
+
+	// And a run where a read was refused must declare what depended on it.
+	denied := Build(collect(t, &fakeReader{errs: map[string]error{
+		"policies": forbidden("policies"), "secrets": forbidden("secrets"),
+	}}))
+	for _, section := range []string{
+		"orphanedRestorePoints", "retentionAnalysis", "disasterRecovery", "license",
+	} {
+		if !denied.NotCollected(section) {
+			t.Errorf("%q is not declared although the read it needs was refused", section)
+		}
+	}
+}
+
+// topLevelSectionNames reads the report's own JSON tags, so the check above
+// cannot drift from the schema.
+func topLevelSectionNames(t *testing.T) map[string]bool {
+	t.Helper()
+	out := map[string]bool{}
+	rt := reflect.TypeOf(kdl.Report{})
+	for i := 0; i < rt.NumField(); i++ {
+		tag, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+		if tag != "" && tag != "-" {
+			out[tag] = true
+		}
+	}
+	return out
 }
 
 func deref(s *string) string {
@@ -399,7 +457,7 @@ func TestOpenShiftDetectedFromServedAPIs(t *testing.T) {
 // not an unknown.
 func TestPlainKubernetesIsDetected(t *testing.T) {
 	f := &fakeReader{served: map[string]bool{}}
-	for _, tg := range targets("kasten-io") {
+	for _, tg := range targets(Options{KastenNamespace: "kasten-io"}) {
 		f.served[tg.gvr.Resource] = true
 	}
 	f.served["securitycontextconstraints"] = false
@@ -690,21 +748,63 @@ func TestSelectorKindUsesKastenVocabulary(t *testing.T) {
 // TestEveryCollectedTargetFeedsTheReport: an unused read costs API load and
 // RBAC surface, and a denial on one of them flags the whole report as
 // RBAC-degraded over data no section consumes.
+//
+// The check is derived, not listed. It used to compare the plan against a
+// hand-maintained set of keys, which meant a target whose consumer was deleted
+// kept passing until somebody remembered to edit the set -- and the plan's own
+// comment records six reads removed for exactly that drift. Now it greps the
+// package's non-test sources for the key, so deleting the consumer breaks the
+// test on the next run.
 func TestEveryCollectedTargetFeedsTheReport(t *testing.T) {
-	consumed := map[string]bool{
-		"namespaces": true, "storageClasses": true, "volumeSnapshotClasses": true,
-		"k10Pods": true, "k10Deployments": true, "policies": true, "profiles": true,
-		"policyPresets": true, "transformSets": true, "blueprintBindings": true,
-		"blueprints": true, "backupActions": true, "exportActions": true,
-		"restoreActions": true, "restorePoints": true, "clusterRoles": true,
-		"clusterRoleBindings": true, "roles": true, "roleBindings": true,
-		"routes": true, "scc": true, "virtualMachines": true,
-	}
-	for _, tg := range targets("kasten-io") {
-		if !consumed[tg.key] {
-			t.Errorf("target %q is collected but no section reads it; drop it or wire it up", tg.key)
+	sources := packageSources(t)
+
+	for _, tg := range targets(Options{KastenNamespace: "kasten-io"}) {
+		if !strings.Contains(sources, strconv.Quote(tg.key)) {
+			t.Errorf("target %q is collected but its key appears in no source file, so no "+
+				"section reads it; drop it or wire it up", tg.key)
 		}
 	}
+
+	// Positive control: a key nothing consumes must not be found, or the check
+	// above passes vacuously and the guard it replaced was worth more.
+	if strings.Contains(sources, strconv.Quote("aKeyNoSectionReads")) {
+		t.Fatal("the consumer search matches a key nothing reads; the check is vacuous")
+	}
+	// And one that IS consumed must be found, so a search over the wrong files
+	// cannot pass by finding nothing at all.
+	if !strings.Contains(sources, strconv.Quote("policies")) {
+		t.Fatal("the consumer search cannot find a key that is certainly consumed")
+	}
+}
+
+// packageSources concatenates every non-test Go file in this package EXCEPT the
+// one declaring the collection plan.
+//
+// Excluding it is the whole point: a target's key is a literal in resources.go, so
+// searching that file too makes every key match its own declaration and the check
+// vacuous. It was, on the first attempt -- adding a target consuming nothing still
+// passed.
+func packageSources(t *testing.T) string {
+	t.Helper()
+	const planFile = "resources.go"
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("reading package directory: %v", err)
+	}
+	var sb strings.Builder
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") ||
+			strings.HasSuffix(e.Name(), "_test.go") || e.Name() == planFile {
+			continue
+		}
+		b, err := os.ReadFile(e.Name())
+		if err != nil {
+			t.Fatalf("reading %s: %v", e.Name(), err)
+		}
+		sb.Write(b)
+	}
+	return sb.String()
 }
 
 // TestImmutabilityDaysSurvivesDurationShapes: the fix that made duration
@@ -733,17 +833,214 @@ func TestImmutabilityDaysSurvivesDurationShapes(t *testing.T) {
 	}
 }
 
-// TestNoFalseRBACClaimOnTheLicenceSection: the licence section is not collected
-// at all, which unpopulatedSections declares. Marking node consumption "not
-// assessed" as well made the report say the node listing was denied by RBAC --
-// and nothing was denied, because the node read is not attempted.
-func TestNoFalseRBACClaimOnTheLicenceSection(t *testing.T) {
-	r := buildFrom(t, map[string][]unstructured.Unstructured{})
-
-	if r.License.NodeConsumption.Assessed != nil {
-		t.Error("node consumption is annotated as unassessed, which the renderer reports as an RBAC denial")
+// TestNodeConsumptionAssessmentMatchesWhatWasRead: the renderer shows an
+// unassessed node count as an RBAC denial, so the flag has to track whether the
+// read actually happened. It once said "denied" on a report where the node read
+// was never attempted at all, which is its own false claim.
+func TestNodeConsumptionAssessmentMatchesWhatWasRead(t *testing.T) {
+	read := buildFrom(t, map[string][]unstructured.Unstructured{})
+	if a := read.License.NodeConsumption.Assessed; a == nil || !*a {
+		t.Errorf("assessed = %v after a successful node read; the report claims a denial that did not happen", a)
 	}
-	if !contains(UnpopulatedSections(), "license") {
-		t.Error("the licence section must still be declared uncollected")
+
+	denied := Build(collect(t, &fakeReader{errs: map[string]error{"nodes": forbidden("nodes")}}))
+	if a := denied.License.NodeConsumption.Assessed; a == nil || *a {
+		t.Errorf("assessed = %v with the node listing denied; zero nodes against any limit "+
+			"reads as a licence comfortably inside its entitlement", a)
+	}
+	if got := denied.License.NodeConsumption.Status; got != kdl.StatusNotAssessed {
+		t.Errorf("consumption status = %q, want %q over a node count nobody could read",
+			got, kdl.StatusNotAssessed)
+	}
+}
+
+// TestRedundantPairsSeparateCatchallOverlapFromRealDuplication is what makes the
+// section usable rather than noise. On a cluster with a catch-all policy every
+// other policy overlaps it by construction, so a raw pair count grows with the
+// policy count and names no action: a 30-policy cluster reports 29 pairs. Two
+// specific policies overlapping is the actionable finding -- somebody is paying
+// for two snapshots of the same namespace.
+func TestRedundantPairsSeparateCatchallOverlapFromRealDuplication(t *testing.T) {
+	backupOn := func(patterns ...any) map[string]any {
+		spec := map[string]any{
+			"frequency": "@daily",
+			"actions":   []any{map[string]any{"action": "backup"}},
+		}
+		if len(patterns) > 0 {
+			spec["selector"] = map[string]any{"matchExpressions": []any{
+				map[string]any{
+					"key":      "k10.kasten.io/appNamespace",
+					"operator": "In",
+					"values":   patterns,
+				},
+			}}
+		}
+		return spec
+	}
+
+	r := buildFrom(t, map[string][]unstructured.Unstructured{
+		"namespaces": {obj("Namespace", "shop", nil), obj("Namespace", "billing", nil)},
+		"policies": {
+			policy("everything", backupOn()),       // catch-all
+			policy("shop-daily", backupOn("shop")), // overlaps the catch-all
+			policy("shop-again", backupOn("shop")), // and genuinely duplicates shop-daily
+			policy("billing-daily", backupOn("billing")),
+		},
+	})
+
+	sum := r.PolicyAnalysis.Summary
+	// everything×shop-daily, everything×shop-again, everything×billing-daily are
+	// catch-all overlaps; shop-daily×shop-again is the real duplication.
+	if sum.RedundantPairsGenuine != 1 {
+		t.Errorf("redundantPairsGenuine = %d, want 1 (shop-daily and shop-again): %+v",
+			sum.RedundantPairsGenuine, r.PolicyAnalysis.RedundantPairs)
+	}
+	if sum.RedundantPairsWithCatchall != 3 {
+		t.Errorf("redundantPairsWithCatchall = %d, want 3", sum.RedundantPairsWithCatchall)
+	}
+	if sum.RedundantPairCount != 4 {
+		t.Errorf("redundantPairCount = %d, want 4 in total", sum.RedundantPairCount)
+	}
+
+	var genuine *kdl.PolicyAnalysisRedundantPair
+	for i := range r.PolicyAnalysis.RedundantPairs {
+		if !r.PolicyAnalysis.RedundantPairs[i].InvolvesCatchall {
+			genuine = &r.PolicyAnalysis.RedundantPairs[i]
+		}
+	}
+	if genuine == nil {
+		t.Fatal("no genuine pair recorded")
+	}
+	if len(genuine.SharedNamespaces) != 1 || genuine.SharedNamespaces[0] != "shop" {
+		t.Errorf("sharedNamespaces = %v, want just shop", genuine.SharedNamespaces)
+	}
+	if !contains(genuine.SharedActions, "backup") {
+		t.Errorf("sharedActions = %v, want backup among them", genuine.SharedActions)
+	}
+	if !genuine.SameFrequency {
+		t.Error("sameFrequency = false on two @daily policies; a reader uses it to tell " +
+			"duplication from a deliberate retention tier")
+	}
+	if r.NotCollected("policyAnalysis.summary.redundantPairsGenuine") {
+		t.Error("the redundancy sub-path is still declared uncomputed")
+	}
+}
+
+// TestPoliciesOverlappingWithoutASharedActionAreNotRedundant: an export policy
+// and a backup policy on the same namespace do different work.
+func TestPoliciesOverlappingWithoutASharedActionAreNotRedundant(t *testing.T) {
+	sel := map[string]any{"matchExpressions": []any{
+		map[string]any{
+			"key": "k10.kasten.io/appNamespace", "operator": "In", "values": []any{"shop"},
+		},
+	}}
+	r := buildFrom(t, map[string][]unstructured.Unstructured{
+		"namespaces": {obj("Namespace", "shop", nil)},
+		"policies": {
+			policy("backs-up", map[string]any{
+				"frequency": "@daily", "selector": sel,
+				"actions": []any{map[string]any{"action": "backup"}},
+			}),
+			policy("imports", map[string]any{
+				"frequency": "@daily", "selector": sel,
+				"actions": []any{map[string]any{"action": "import"}},
+			}),
+		},
+	})
+
+	if got := r.PolicyAnalysis.Summary.RedundantPairCount; got != 0 {
+		t.Errorf("redundantPairCount = %d, want 0: the two policies share a namespace but no action", got)
+	}
+}
+
+// TestReportsPolicyExplainsAbsentExportFigures: the export-storage numbers come
+// from this policy's output, so a reader who finds them missing needs to see why
+// here rather than concluding the exports are empty.
+func TestReportsPolicyExplainsAbsentExportFigures(t *testing.T) {
+	absent := buildFrom(t, map[string][]unstructured.Unstructured{})
+	if absent.ReportsPolicy.Exists {
+		t.Error("reportsPolicy.exists = true with no such policy")
+	}
+	if absent.ReportsPolicy.Note == "" {
+		t.Error("reportsPolicy carries no note explaining what its absence costs")
+	}
+
+	present := buildFrom(t, map[string][]unstructured.Unstructured{
+		"policies": {policy("k10-system-reports-policy", map[string]any{"frequency": "@daily"})},
+		"reportactions": {obj("ReportAction", "run-1", map[string]any{
+			"status": map[string]any{"state": "Complete"},
+		})},
+	})
+	if !present.ReportsPolicy.Exists || present.ReportsPolicy.Frequency != "@daily" {
+		t.Errorf("reportsPolicy = %+v, want it found with its frequency", present.ReportsPolicy)
+	}
+	if present.ReportsPolicy.ReportActionsCount != 1 {
+		t.Errorf("reportActionsCount = %d, want 1", present.ReportsPolicy.ReportActionsCount)
+	}
+	if got := present.ReportsPolicy.LastRun.State; got != "Complete" {
+		t.Errorf("lastRun.state = %q, want Complete", got)
+	}
+}
+
+// TestEveryConsumerGuardIsDeclarable is the check that was missing, and its
+// absence let thirteen renderer guards and seven diff guards sit dead.
+//
+// A guard names a section and asks whether the producer declared it uncomputed.
+// If the producer can never emit that name, the guard is unreachable code shaped
+// exactly like a safety net -- and the section it was meant to protect renders its
+// zero values as findings about the cluster. This test makes the next mismatch a
+// failing build rather than a wrong report.
+func TestEveryConsumerGuardIsDeclarable(t *testing.T) {
+	declarable := DeclarableSections()
+
+	for _, section := range report.GuardedSections() {
+		if !declarable[section] {
+			t.Errorf("the HTML renderer guards on %q, which this collector can never declare; "+
+				"the guard is dead and the section will render its zero values as findings", section)
+		}
+	}
+	for _, section := range diff.ComparedSections() {
+		if !declarable[section] {
+			t.Errorf("kdl diff skips %q when it is declared, but this collector can never declare it; "+
+				"a denied read there produces regressions on an unchanged cluster", section)
+		}
+	}
+}
+
+// TestEveryReportSectionCanBeDeclared: a section with no way to declare itself is
+// a section that will present zeros as facts the first time its read is refused.
+// The exemptions are the fields that are metadata about the scan rather than
+// findings about the cluster.
+func TestEveryReportSectionCanBeDeclared(t *testing.T) {
+	exempt := map[string]bool{
+		// Scan metadata: describes the run, not the cluster.
+		"kdlVersion": true, "platform": true, "kastenVersion": true,
+		"kastenCompatibility": true, "rbacLimited": true, "collectionFlags": true,
+		"unpopulatedSections": true, "cluster": true,
+		// Scalars carried alongside profiles, and declared through it.
+		"immutabilitySignal": true, "immutabilityDays": true,
+		// policyRunStats is declared through its three sub-paths, which is finer
+		// grained than the section: kdl diff compares effectiveRpo on its own.
+		"policyRunStats": true,
+		// Derived entirely from sections that are themselves declarable.
+		"failedActionsTop5": true, "stuckActions": true,
+		"namespaceProtectionStatus": true, "restorePointsByNamespace": true,
+		"orphanedRestorePoints": true, "retentionAnalysis": true,
+		"disasterRecovery": true, "monitoring": true, "multiCluster": true,
+		"dataUsage": true, "license": true, "reportsPolicy": true,
+		"catalog": true, "virtualization": true, "profileValidation": true,
+		"ransomwareReadiness": true, "bestPractices": true, "k10Configuration": true,
+		// Self-describing: carries its own per-list accessibility flags and renders
+		// a partial-inventory note, which beats withholding the lists that were read.
+		"k10Rbac": true,
+	}
+	declarable := DeclarableSections()
+
+	for section := range topLevelSectionNames(t) {
+		if declarable[section] || exempt[section] {
+			continue
+		}
+		t.Errorf("no way to declare %q uncomputed: if its read is refused, the section "+
+			"renders its zero values and nothing anywhere says why", section)
 	}
 }

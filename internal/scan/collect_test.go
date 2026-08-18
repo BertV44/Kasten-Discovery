@@ -22,11 +22,16 @@ type fakeReader struct {
 	served   map[string]bool
 	version  string
 	discoErr error
+	// volumeStats is what the kubelet on any node reports; volumeStatsErr stands
+	// in for the RBAC denial that is the expected outcome on most clusters, since
+	// get on nodes/proxy is not a permission K10 itself needs.
+	volumeStats    []VolumeStat
+	volumeStatsErr error
 }
 
 func (f *fakeReader) key(gvr k8sschema.GroupVersionResource) string { return gvr.Resource }
 
-func (f *fakeReader) List(_ context.Context, gvr k8sschema.GroupVersionResource, _ string) (*unstructured.UnstructuredList, error) {
+func (f *fakeReader) List(_ context.Context, gvr k8sschema.GroupVersionResource, _, _ string) (*unstructured.UnstructuredList, error) {
 	k := f.key(gvr)
 	if err, ok := f.errs[k]; ok {
 		return nil, err
@@ -39,6 +44,10 @@ func (f *fakeReader) Get(_ context.Context, gvr k8sschema.GroupVersionResource, 
 		return nil, err
 	}
 	return &unstructured.Unstructured{}, nil
+}
+
+func (f *fakeReader) NodeVolumeStats(_ context.Context, _ string) ([]VolumeStat, error) {
+	return f.volumeStats, f.volumeStatsErr
 }
 
 func (f *fakeReader) ServerVersion() (string, error) { return f.version, nil }
@@ -74,11 +83,11 @@ func collect(t *testing.T, f *fakeReader) Result {
 	t.Helper()
 	if f.served == nil {
 		f.served = map[string]bool{}
-		for _, tg := range targets("kasten-io") {
+		for _, tg := range targets(Options{KastenNamespace: "kasten-io"}) {
 			f.served[tg.gvr.Resource] = true
 		}
 	}
-	return Collect(context.Background(), f, "kasten-io", 4)
+	return Collect(context.Background(), f, Options{KastenNamespace: "kasten-io", Parallelism: 4})
 }
 
 // TestDeniedReadIsNotAnEmptyRead is the whole point of the accessibility
@@ -145,7 +154,7 @@ func TestDeniedPolicyReadDoesNotDeclareEveryNamespaceUnprotected(t *testing.T) {
 // permissions warning on every non-virtualized cluster.
 func TestAbsentResourceIsNotADenial(t *testing.T) {
 	f := &fakeReader{served: map[string]bool{}}
-	for _, tg := range targets("kasten-io") {
+	for _, tg := range targets(Options{KastenNamespace: "kasten-io"}) {
 		f.served[tg.gvr.Resource] = true
 	}
 	f.served["virtualmachines"] = false
@@ -183,7 +192,7 @@ func TestPartialRBACReadIsNotFullyAccessible(t *testing.T) {
 // with nothing saying why.
 func TestEveryTargetIsCollected(t *testing.T) {
 	res := collect(t, &fakeReader{})
-	for _, tg := range targets("kasten-io") {
+	for _, tg := range targets(Options{KastenNamespace: "kasten-io"}) {
 		if _, ok := res.Collections[tg.key]; !ok {
 			t.Errorf("target %q was declared but never collected", tg.key)
 		}
@@ -228,7 +237,7 @@ func TestDiscoveryFailureIsNotAbsence(t *testing.T) {
 // kdl scan refuses to write one.
 func TestTotalFailureIsDetected(t *testing.T) {
 	all := map[string]error{}
-	for _, tg := range targets("kasten-io") {
+	for _, tg := range targets(Options{KastenNamespace: "kasten-io"}) {
 		all[tg.gvr.Resource] = errors.New("connection refused")
 	}
 	res := collect(t, &fakeReader{errs: all, discoErr: errors.New("connection refused")})
@@ -242,7 +251,7 @@ func TestTotalFailureIsDetected(t *testing.T) {
 // means the cluster was reached, and the report is worth writing.
 func TestPartialSuccessIsNotTotalFailure(t *testing.T) {
 	all := map[string]error{}
-	for _, tg := range targets("kasten-io") {
+	for _, tg := range targets(Options{KastenNamespace: "kasten-io"}) {
 		all[tg.gvr.Resource] = errors.New("connection refused")
 	}
 	delete(all, "namespaces")

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -41,6 +43,29 @@ type Result struct {
 	KubernetesVersion string
 	// KastenNamespace is the namespace the Kasten-scoped reads used.
 	KastenNamespace string
+	// CollectedAt is when the collection ran. Every age in the report -- a stuck
+	// action, a stale namespace -- is measured from it rather than from
+	// time.Now() at render time, so the same Result always builds the same
+	// report and a test can state what "now" is.
+	CollectedAt time.Time
+	// SkipHelm records that the Helm release read was not attempted, which is
+	// different from it having failed and is reported as such.
+	SkipHelm bool
+	// VolumeStats holds the kubelet's own measurement of the volumes it mounts,
+	// keyed "namespace/pvcName". It is empty on most clusters, because the read
+	// needs get on nodes/proxy and that is not a permission K10 requires --
+	// VolumeStatsErr then says why, and nothing in the report claims a figure.
+	VolumeStats    map[string]VolumeStat
+	VolumeStatsErr error
+}
+
+// Now is the instant ages are measured from, falling back to the current time
+// for a Result assembled without one.
+func (r Result) Now() time.Time {
+	if r.CollectedAt.IsZero() {
+		return time.Now()
+	}
+	return r.CollectedAt
 }
 
 // Denials lists the keys whose read was refused, sorted for a stable report.
@@ -88,17 +113,20 @@ func (r Result) TotalFailure() bool {
 // Collect fetches every target concurrently, capturing each failure against its
 // own resource instead of failing the whole scan. One denied read must not cost
 // the other thirty-odd sections.
-func Collect(ctx context.Context, r Reader, kastenNS string, parallelism int) Result {
-	all := targets(kastenNS)
+func Collect(ctx context.Context, r Reader, opts Options) Result {
+	all := targets(opts)
 	res := Result{
 		Collections:     make(map[string]Collection, len(all)),
-		KastenNamespace: kastenNS,
+		KastenNamespace: opts.KastenNamespace,
+		CollectedAt:     time.Now(),
+		SkipHelm:        opts.SkipHelm,
 	}
 
 	if v, err := r.ServerVersion(); err == nil {
 		res.KubernetesVersion = v
 	}
 
+	parallelism := opts.Parallelism
 	if parallelism < 1 {
 		parallelism = 1
 	}
@@ -115,7 +143,7 @@ func Collect(ctx context.Context, r Reader, kastenNS string, parallelism int) Re
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			c := fetch(ctx, r, t, kastenNS)
+			c := fetch(ctx, r, t, opts.KastenNamespace)
 
 			mu.Lock()
 			res.Collections[t.key] = c
@@ -123,7 +151,62 @@ func Collect(ctx context.Context, r Reader, kastenNS string, parallelism int) Re
 		}(t)
 	}
 	wg.Wait()
+
+	// One best-effort enrichment, deliberately outside the target plan above.
+	//
+	// It is outside it for a specific reason: a failure in the plan is recorded in
+	// Denials() and sets rbacLimited on the whole report. Routing an optional
+	// measurement through that would mark every report from every cluster whose
+	// operator did not grant nodes/proxy as RBAC-degraded -- over one percentage
+	// that feeds no verdict. The plan's own comment records six reads removed for
+	// exactly that mistake.
+	res.VolumeStats, res.VolumeStatsErr = collectVolumeStats(ctx, r, res)
 	return res
+}
+
+// collectVolumeStats asks the kubelet hosting the catalog pod what it measures
+// for the volumes mounted there.
+//
+// Only that one node is asked. The figure the report wants is the catalog's, and
+// walking every node to build a cluster-wide picture would be a large read for
+// data nothing consumes.
+func collectVolumeStats(ctx context.Context, r Reader, res Result) (map[string]VolumeStat, error) {
+	node := catalogNode(res)
+	if node == "" {
+		// No catalog pod was found, or its pod listing was denied. There is
+		// nothing to ask and no failure to report -- the absent measurement is
+		// already visible as a null percentage.
+		return nil, nil
+	}
+	stats, err := r.NodeVolumeStats(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]VolumeStat, len(stats))
+	for _, v := range stats {
+		out[v.PVCNamespace+"/"+v.PVCName] = v
+	}
+	return out, nil
+}
+
+// catalogNode finds the node the catalog pod runs on, by label and then by name
+// for the same reason the PVC lookup does: the component=catalog label scheme
+// varies with the chart version and with how K10 was installed.
+func catalogNode(res Result) string {
+	byName := ""
+	for _, pod := range res.Items("k10Pods") {
+		nodeName, ok := str(pod.Object, "spec", "nodeName")
+		if !ok || nodeName == "" {
+			continue
+		}
+		if pod.GetLabels()["component"] == "catalog" {
+			return nodeName
+		}
+		if byName == "" && strings.Contains(strings.ToLower(pod.GetName()), "catalog") {
+			byName = nodeName
+		}
+	}
+	return byName
 }
 
 func fetch(ctx context.Context, r Reader, t target, kastenNS string) Collection {
@@ -153,7 +236,7 @@ func fetch(ctx context.Context, r Reader, t target, kastenNS string) Collection 
 		ns = kastenNS
 	}
 
-	list, err := r.List(ctx, t.gvr, ns)
+	list, err := r.List(ctx, t.gvr, ns, t.labelSelector)
 	switch {
 	case err == nil:
 		c.Items = list.Items

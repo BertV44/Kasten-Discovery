@@ -199,17 +199,25 @@ jobs:
             | `kdl report` | renders all 35 sections from a discovery JSON |
             | `kdl validate` | type-checks a discovery JSON against the schema |
             | `kdl diff` | compares two reports; exit code = regression count |
-            | `kdl scan` | **partial** — see below |
+            | `kdl scan` | computes every section — **but see below** |
 
-            **`kdl scan` has never been run against a live Kasten cluster.** It
-            collects the inventory and computes namespace coverage and policy
-            analysis; the verdict sections (ransomware readiness, the 16
-            best-practice checks, effective RPO, retention, K10 configuration)
-            are not computed, and it prints that list on every run. Its CRD field
-            paths are derived from `KDL.sh`'s jq expressions rather than verified
-            against a cluster.
+            **`kdl scan` has never been run against a live Kasten cluster.** Its
+            CRD field paths are derived from `KDL.sh`'s jq expressions rather than
+            verified against a cluster, so treat its output as reasoned rather
+            than confirmed until you have compared one against a `KDL.sh` report
+            from the same cluster.
 
-            For a complete report, [KDL.sh](https://github.com/BertV44/Kasten-Disco-Lite)
-            remains the tool to use. `kdl report` and `kdl diff` consume its JSON.
+            It computes every report section. One figure is conditional: catalog
+            free space is read from the kubelet's volume stats, which needs `get`
+            on `nodes/proxy` — a permission K10 itself does not require, so the
+            scan asks best-effort and carries on without it.
+
+            Anything it could not read is named in the report's
+            `unpopulatedSections`, printed on every run, skipped by `kdl diff` and
+            shown as uncollected in the HTML — so a partial scan is never
+            mistakable for a clean bill of health.
+
+            [KDL.sh](https://github.com/BertV44/Kasten-Disco-Lite) is still the
+            tool in use with customers. `kdl report` and `kdl diff` consume its JSON.
 
             The tool never writes to a cluster.

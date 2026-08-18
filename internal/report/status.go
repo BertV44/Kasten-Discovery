@@ -60,13 +60,30 @@ var statusTable = map[string]statusMeta{
 	"NOT_CONFIGURED":        {PolarityBad, "✗"},
 	"NOT_ENABLED":           {PolarityBad, "✗"},
 	"GAPS_DETECTED":         {PolarityBad, "✗"},
+	// Two more values KDL.sh emits that no available sample carries, found by
+	// reading the emitter rather than by the guard firing on a report: NOT_USED
+	// on a cluster with no policy presets, and CONFIGURED_NOT_HEALTHY from the DR
+	// verdict, which the best-practice check carries verbatim. Both were
+	// rendering as "? …" in amber -- so an unhealthy DR, a critical check, was
+	// painted as an unrecognised value rather than as the failure it is.
+	"NOT_USED":               {PolarityBad, "✗"},
+	"CONFIGURED_NOT_HEALTHY": {PolarityBad, "✗"},
 
 	// Licence status values. Found by the unknown-status guard firing on a real
 	// report: VALID was rendering as "? VALID" because only bestPractices values
 	// were modelled here.
-	"VALID":    {PolarityOK, "✓"},
-	"EXPIRED":  {PolarityBad, "✗"},
-	"EXPIRING": {PolarityWarn, "⚠"},
+	//
+	// UNKNOWN is the third one KDL.sh emits, for a licence whose dateEnd cannot be
+	// read (KDL.sh:960), and it was missing -- so such a licence rendered as an
+	// amber "? UNKNOWN" and counted toward the unrecognised-status total. Info, not
+	// warn: an unreadable expiry date is neither a live licence nor an expired one.
+	//
+	// EXPIRING used to sit here and was removed: KDL.sh has no expiry-warning
+	// threshold at all -- EXPIRED if daysRemaining is negative, VALID otherwise --
+	// so it was exactly the invented entry the note below warns about.
+	"VALID":   {PolarityOK, "✓"},
+	"EXPIRED": {PolarityBad, "✗"},
+	"UNKNOWN": {PolarityInfo, "ℹ"},
 	// Node-consumption and paid-entitlement status. These are exactly the values
 	// KDL.sh emits (`CONSUMPTION_STATUS` / `PAID_STATUS`) -- an earlier revision
 	// also carried OVER_LIMIT, AT_LIMIT, WITHIN_PAID and UNKNOWN, which KDL never

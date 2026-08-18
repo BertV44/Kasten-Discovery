@@ -259,6 +259,20 @@ func notCollected(base, cur *schema.Report, section string) bool {
 	return section != "" && (base.NotCollected(section) || cur.NotCollected(section))
 }
 
+// ComparedSections lists the report sections this comparison skips when either
+// side declares them uncomputed. Exported for the same reason as
+// report.GuardedSections: a guard on a name the producer cannot emit is dead code
+// wearing the costume of a safety net.
+func ComparedSections() []string {
+	var out []string
+	for _, s := range sections {
+		if s.source != "" {
+			out = append(out, s.source)
+		}
+	}
+	return out
+}
+
 // sections is the comparison contract, in the order kdl-diff.sh prints it.
 var sections = []sectionCmp{
 	{name: "Metadata", compare: cmpMetadata},
@@ -270,7 +284,11 @@ var sections = []sectionCmp{
 	{name: "Namespace Coverage", compare: cmpCoverage, source: "coverage"},
 	{name: "Policy Analysis", compare: cmpPolicyAnalysis, source: "policyAnalysis"},
 	{name: "Effective RPO", compare: cmpRPO, source: "policyRunStats.effectiveRpo"},
-	{name: "K10 RBAC", compare: cmpRBAC, source: "k10Rbac"},
+	// K10 RBAC carries no source on purpose: cmpRBAC guards itself on the
+	// inventory's own accessibility flags, which are finer grained than a
+	// section-level declaration -- three of four RBAC lists readable is worth
+	// comparing what was read, and the flags say what was not.
+	{name: "K10 RBAC", compare: cmpRBAC},
 	{name: "Profiles", compare: cmpProfiles, source: "profiles"},
 	{name: "Disaster Recovery", compare: cmpDR, source: "disasterRecovery"},
 	{name: "Virtualization", compare: cmpVirtualization, source: "virtualization"},
@@ -484,7 +502,7 @@ func cmpCatalog(base, cur *schema.Report, b *builder) {
 		return
 	}
 
-	bf, cf := base.Catalog.FreeSpacePercent, cur.Catalog.FreeSpacePercent
+	bf, cf := *base.Catalog.FreeSpacePercent, *cur.Catalog.FreeSpacePercent
 	if bf == cf {
 		return
 	}
@@ -511,11 +529,15 @@ func cmpCatalog(base, cur *schema.Report, b *builder) {
 	})
 }
 
-// catalogPresent distinguishes a catalog that was measured from one that was
-// never collected. A PVC name is the cheapest positive evidence the section ran.
+// catalogPresent distinguishes a catalog whose free space was measured from one
+// where it was not.
+//
+// It tests the figure this comparison actually reads, not the section as a
+// whole: a collector can identify the catalog PVC and its size without being
+// able to measure free space -- that number comes from running df inside the
+// pod -- so a named PVC is not evidence the percentage exists.
 func catalogPresent(r *schema.Report) bool {
-	return r.Catalog.PVCName != "" || r.Catalog.Size != "" ||
-		r.Catalog.FreeSpacePercent != 0 || r.Catalog.UsedPercent != 0
+	return r.Catalog.FreeSpacePercent != nil
 }
 
 func cmpPolicies(base, cur *schema.Report, b *builder) {

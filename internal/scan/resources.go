@@ -21,8 +21,20 @@ var (
 
 	gvrDeployments = k8sschema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
 
+	gvrConfigMaps = k8sschema.GroupVersionResource{Version: "v1", Resource: "configmaps"}
+	gvrPVCs       = k8sschema.GroupVersionResource{Version: "v1", Resource: "persistentvolumeclaims"}
+	gvrServices   = k8sschema.GroupVersionResource{Version: "v1", Resource: "services"}
+	// Secrets are read once, by label, for the Helm release object only -- see
+	// the helmRelease target below.
+	gvrSecrets = k8sschema.GroupVersionResource{Version: "v1", Resource: "secrets"}
+
+	gvrIngresses       = k8sschema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"}
+	gvrNetworkPolicies = k8sschema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}
+	gvrMutatingWebhook = k8sschema.GroupVersionResource{Group: "admissionregistration.k8s.io", Version: "v1", Resource: "mutatingwebhookconfigurations"}
+
 	gvrStorageClasses = k8sschema.GroupVersionResource{Group: "storage.k8s.io", Version: "v1", Resource: "storageclasses"}
 	gvrVolumeSnapClas = k8sschema.GroupVersionResource{Group: "snapshot.storage.k8s.io", Version: "v1", Resource: "volumesnapshotclasses"}
+	gvrVolumeSnaps    = k8sschema.GroupVersionResource{Group: "snapshot.storage.k8s.io", Version: "v1", Resource: "volumesnapshots"}
 
 	gvrClusterRoles        = k8sschema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterroles"}
 	gvrClusterRoleBindings = k8sschema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "clusterrolebindings"}
@@ -36,17 +48,36 @@ var (
 	gvrTransformSets  = k8sschema.GroupVersionResource{Group: "config.kio.kasten.io", Version: "v1alpha1", Resource: "transformsets"}
 	gvrBlueprintBinds = k8sschema.GroupVersionResource{Group: "config.kio.kasten.io", Version: "v1alpha1", Resource: "blueprintbindings"}
 
+	gvrRunActions     = k8sschema.GroupVersionResource{Group: "actions.kio.kasten.io", Version: "v1alpha1", Resource: "runactions"}
 	gvrBackupActions  = k8sschema.GroupVersionResource{Group: "actions.kio.kasten.io", Version: "v1alpha1", Resource: "backupactions"}
 	gvrExportActions  = k8sschema.GroupVersionResource{Group: "actions.kio.kasten.io", Version: "v1alpha1", Resource: "exportactions"}
 	gvrRestoreActions = k8sschema.GroupVersionResource{Group: "actions.kio.kasten.io", Version: "v1alpha1", Resource: "restoreactions"}
 
 	gvrRestorePoints = k8sschema.GroupVersionResource{Group: "apps.kio.kasten.io", Version: "v1alpha1", Resource: "restorepoints"}
+	// K10's own reporting output. Reports exist only where the system reports
+	// policy has run, which is why the export-storage and licensing figures they
+	// carry are optional. ReportActions are the runs themselves, and say whether
+	// that policy is working.
+	//
+	// The version on the reporting group is inferred from the other Kasten groups,
+	// which are all v1alpha1: KDL.sh names the resource without one and lets
+	// kubectl resolve it. If it is wrong, discovery answers "not served" and the
+	// export figures go quietly absent rather than wrong -- but reportsPolicy will
+	// then say the policy exists and has run, which is the signal to check this.
+	gvrK10Reports    = k8sschema.GroupVersionResource{Group: "reporting.kio.kasten.io", Version: "v1alpha1", Resource: "reports"}
+	gvrReportActions = k8sschema.GroupVersionResource{Group: "actions.kio.kasten.io", Version: "v1alpha1", Resource: "reportactions"}
+
+	gvrNodes = k8sschema.GroupVersionResource{Version: "v1", Resource: "nodes"}
+
+	// Multi-cluster: the joined-cluster records a primary holds.
+	gvrMCClusters = k8sschema.GroupVersionResource{Group: "dist.kio.kasten.io", Version: "v1alpha1", Resource: "clusters"}
 
 	gvrBlueprints = k8sschema.GroupVersionResource{Group: "cr.kanister.io", Version: "v1alpha1", Resource: "blueprints"}
 
 	// Platform detection and virtualization.
 	gvrRoutes          = k8sschema.GroupVersionResource{Group: "route.openshift.io", Version: "v1", Resource: "routes"}
 	gvrVirtualMachines = k8sschema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "virtualmachines"}
+	gvrKubeVirts       = k8sschema.GroupVersionResource{Group: "kubevirt.io", Version: "v1", Resource: "kubevirts"}
 	gvrSCC             = k8sschema.GroupVersionResource{Group: "security.openshift.io", Version: "v1", Resource: "securitycontextconstraints"}
 )
 
@@ -63,6 +94,26 @@ type target struct {
 	// without virtualization, no routes off OpenShift. Absence of an optional
 	// resource is not a gap in the report.
 	optional bool
+	// labelSelector narrows the read server-side. Only the Helm release read
+	// uses it, and it is not a convenience there: without it the collector would
+	// have to list every Secret in the Kasten namespace to find one object.
+	labelSelector string
+}
+
+// Options are the collection knobs a caller sets. They are a struct rather than
+// a parameter list because SkipHelm has to reach the plan itself: skipping the
+// Helm read means not issuing it, not discarding its result afterwards.
+type Options struct {
+	// KastenNamespace is where K10 is installed.
+	KastenNamespace string
+	// Parallelism bounds concurrent fetches.
+	Parallelism int
+	// SkipHelm drops the Helm release read, for environments where reading the
+	// release object is not acceptable. The report records the choice in
+	// collectionFlags.skipHelm and in k10Configuration.source, because a
+	// configuration section built without it is full of defaults and looks
+	// nothing like an unreadable one.
+	SkipHelm bool
 }
 
 // targets is the full collection plan. Order is irrelevant -- they are fetched
@@ -76,9 +127,11 @@ type target struct {
 // on one of them set rbacLimited on the whole report, flagging it as
 // RBAC-degraded because a read that feeds no section was refused. Add them back
 // together with the code that consumes them, not before.
-func targets(kastenNS string) []target {
-	_ = kastenNS // namespace is applied by the collector, listed here for clarity
-	return []target{
+//
+// runActions came back on those terms: policyRunStats (runstats.go) is the code
+// that consumes it, and nothing else in the report needs it.
+func targets(opts Options) []target {
+	plan := []target{
 		{key: "namespaces", gvr: gvrNamespaces},
 		{key: "storageClasses", gvr: gvrStorageClasses},
 		{key: "volumeSnapshotClasses", gvr: gvrVolumeSnapClas, optional: true},
@@ -93,10 +146,37 @@ func targets(kastenNS string) []target {
 		{key: "blueprintBindings", gvr: gvrBlueprintBinds, optional: true},
 		{key: "blueprints", gvr: gvrBlueprints, optional: true},
 
+		// RunActions are the per-policy run records. They are the only objects
+		// carrying startTime and endTime, so every duration in the report comes
+		// from here rather than from the per-object actions.
+		{key: "runActions", gvr: gvrRunActions},
 		{key: "backupActions", gvr: gvrBackupActions},
 		{key: "exportActions", gvr: gvrExportActions},
 		{key: "restoreActions", gvr: gvrRestoreActions},
 		{key: "restorePoints", gvr: gvrRestorePoints, optional: true},
+		{key: "k10Reports", gvr: gvrK10Reports, namespaced: true, optional: true},
+		{key: "reportActions", gvr: gvrReportActions, namespaced: true, optional: true},
+
+		// Cluster-wide PVCs are the widest read here by object count. They carry
+		// the catalog's size and the protected footprint, and nothing narrower
+		// answers either question.
+		{key: "pvcs", gvr: gvrPVCs},
+		{key: "volumeSnapshots", gvr: gvrVolumeSnaps, optional: true},
+
+		// Nodes are read for one figure: how many the cluster consumes against
+		// its licence. Listing them cluster-wide is not part of K10's own
+		// ClusterRole, so a denial here is expected -- and it degrades to
+		// "not assessed" rather than to a node count of zero, which would read as
+		// a licence comfortably within its limit.
+		{key: "nodes", gvr: gvrNodes},
+
+		// Licence secrets. The read is namespace-wide because K10 licence secrets
+		// carry no distinguishing label and their names vary (k10-license,
+		// k10-trial-license, renamed variants), so there is nothing narrower to
+		// select on. Only secrets whose name contains "license" are looked at, and
+		// nothing from the payload is emitted except the licence fields the report
+		// models -- never the raw value.
+		{key: "licenseSecrets", gvr: gvrSecrets, namespaced: true},
 
 		{key: "clusterRoles", gvr: gvrClusterRoles},
 		{key: "clusterRoleBindings", gvr: gvrClusterRoleBindings},
@@ -106,5 +186,35 @@ func targets(kastenNS string) []target {
 		{key: "routes", gvr: gvrRoutes, namespaced: true, optional: true},
 		{key: "scc", gvr: gvrSCC, optional: true},
 		{key: "virtualMachines", gvr: gvrVirtualMachines, optional: true},
+		// The KubeVirt CR carries the virtualization stack's version, which the
+		// report shows beside the VM inventory. It is back in the plan on the terms
+		// the comment above sets: kubeVirtVersion is the code that consumes it.
+		{key: "kubeVirts", gvr: gvrKubeVirts, optional: true},
+
+		// K10's own configuration. The ConfigMap is the fallback source for every
+		// setting the Helm values would otherwise answer, and also carries the
+		// multi-cluster join record.
+		{key: "k10ConfigMaps", gvr: gvrConfigMaps, namespaced: true},
+		{key: "k10Services", gvr: gvrServices, namespaced: true},
+		{key: "k10Ingresses", gvr: gvrIngresses, namespaced: true, optional: true},
+		{key: "k10NetworkPolicies", gvr: gvrNetworkPolicies, namespaced: true, optional: true},
+		{key: "mutatingWebhooks", gvr: gvrMutatingWebhook, optional: true},
+		{key: "mcClusters", gvr: gvrMCClusters, optional: true},
 	}
+
+	// The Helm release object holds the values the operator supplied at install
+	// time, and nothing else answers for settings K10 never writes elsewhere.
+	//
+	// It is a Secret, which is the most sensitive read in the plan, so it is the
+	// narrowest: one label-selected object, from which only the `config` member
+	// is decoded. The rendered manifests in the rest of the payload are never
+	// looked at, and no value from it is emitted verbatim except the specific
+	// settings the section reports. -no-helm drops the read entirely.
+	if !opts.SkipHelm {
+		plan = append(plan, target{
+			key: "helmRelease", gvr: gvrSecrets, namespaced: true, optional: true,
+			labelSelector: "name=k10,owner=helm",
+		})
+	}
+	return plan
 }

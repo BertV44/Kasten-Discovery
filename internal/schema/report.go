@@ -166,11 +166,23 @@ type License struct {
 	Status             string                    `json:"status"`
 	SecretCount        int                       `json:"secretCount"`
 	ParseableCount     int                       `json:"parseableCount"`
-	Unparseable        []json.RawMessage         `json:"unparseable"` // empty array in the source sample - element type unverified
+	Unparseable        []LicenseUnparseable      `json:"unparseable"`
 	Licenses           []LicenseEntry            `json:"licenses"`
 	NodeLimitAggregate LicenseNodeLimitAggregate `json:"nodeLimitAggregate"`
 	NodeConsumption    LicenseNodeConsumption    `json:"nodeConsumption"`
 	NearestExpiry      LicenseNearestExpiry      `json:"nearestExpiry"`
+}
+
+// LicenseUnparseable is a secret that looked like a licence and was not one, or
+// one whose payload could not be read.
+//
+// Typed from KDL.sh's emitter: both samples come from clusters whose licences all
+// parsed, so the list is empty in each -- and while it was raw, a cluster whose
+// licence could not be read showed a parseable count below its secret count with
+// no way to say which secret or why.
+type LicenseUnparseable struct {
+	Secret string `json:"secret"`
+	Reason string `json:"reason"`
 }
 
 // HealthPods mirrors the corresponding object in the KDL report JSON.
@@ -234,10 +246,18 @@ type Health struct {
 
 // MultiCluster mirrors the corresponding object in the KDL report JSON.
 type MultiCluster struct {
-	Role         string          `json:"role"`
-	ClusterCount int             `json:"clusterCount"`
-	PrimaryName  json.RawMessage `json:"primaryName"` // always null in the source sample - type unverified
-	ClusterID    json.RawMessage `json:"clusterId"`   // always null in the source sample - type unverified
+	Role string `json:"role"`
+	// ClusterCount is null off a primary -- KDL.sh emits it only for that role,
+	// because a secondary manages nothing and a standalone cluster is not part of
+	// any federation. As an int it emitted 0, which reads as a primary managing no
+	// clusters rather than as a cluster that has no primary role to count for.
+	ClusterCount *int `json:"clusterCount"`
+	// PrimaryName and ClusterID are set only on a secondary, from the join
+	// ConfigMap, and are null on a primary or a standalone cluster. Typed from
+	// KDL.sh's emitter: both source samples are standalone clusters, so both
+	// fields are null in each.
+	PrimaryName *string `json:"primaryName"`
+	ClusterID   *string `json:"clusterId"`
 }
 
 // DisasterRecovery mirrors the corresponding object in the KDL report JSON.
@@ -515,10 +535,14 @@ type PolicyAnalysis struct {
 
 // PolicyRunStatsLastRunEntry mirrors the corresponding object in the KDL report JSON.
 type PolicyRunStatsLastRunEntry struct {
-	Timestamp string  `json:"timestamp"`
-	State     string  `json:"state"`
-	Duration  int     `json:"duration"`
-	Error     *string `json:"error"`
+	Timestamp string `json:"timestamp"`
+	State     string `json:"state"`
+	// Duration is null while a run is still in flight and on runs that recorded
+	// no start or end time -- KDL.sh emits `null` on that path. It was an int
+	// here, which decoded that null to 0 and rendered it as a run that finished
+	// instantly.
+	Duration *int    `json:"duration"`
+	Error    *string `json:"error"`
 }
 
 // PolicyRunStatsLastRun mirrors the corresponding object in the KDL report JSON.
@@ -614,10 +638,18 @@ type K10Resources struct {
 
 // Catalog mirrors the corresponding object in the KDL report JSON.
 type Catalog struct {
-	PVCName          string `json:"pvcName"`
-	Size             string `json:"size"`
-	FreeSpacePercent int    `json:"freeSpacePercent"`
-	UsedPercent      int    `json:"usedPercent"`
+	PVCName string `json:"pvcName"`
+	Size    string `json:"size"`
+	// The two percentages are null whenever the producer could not measure them,
+	// which KDL.sh emits as `null` and which was decoding to 0 here -- a catalog
+	// reported as 0% free, the single most alarming line the section can carry,
+	// on a cluster where nothing was measured.
+	//
+	// The Go collector never fills them: the figure comes from running df inside
+	// the catalog pod, and a pod exec is a create against pods/exec, which the
+	// read-only Reader has no verb for and readonly_test.go forbids.
+	FreeSpacePercent *int `json:"freeSpacePercent"`
+	UsedPercent      *int `json:"usedPercent"`
 }
 
 // OrphanedRestorePoints mirrors the corresponding object in the KDL report JSON.
@@ -667,14 +699,18 @@ type K10ConfigurationSecurityAuthentication struct {
 
 // K10ConfigurationSecurityEncryption mirrors the corresponding object in the KDL report JSON.
 type K10ConfigurationSecurityEncryption struct {
-	Provider string          `json:"provider"`
-	Details  json.RawMessage `json:"details"` // always null in the source sample - type unverified
+	Provider string `json:"provider"`
+	// Details is the free-text qualifier KDL.sh writes next to the provider
+	// ("CMK configured", "transit: <path>"), null when there is no provider.
+	Details *string `json:"details"`
 }
 
 // K10ConfigurationSecurityAuditLogging mirrors the corresponding object in the KDL report JSON.
 type K10ConfigurationSecurityAuditLogging struct {
-	Enabled bool            `json:"enabled"`
-	Targets json.RawMessage `json:"targets"` // always null in the source sample - type unverified
+	Enabled bool `json:"enabled"`
+	// Targets is a human-readable list ("stdout, S3"), not a structured one --
+	// KDL.sh joins them into one string, and null when logging is off.
+	Targets *string `json:"targets"`
 }
 
 // K10ConfigurationSecuritySecurityContext mirrors the corresponding object in the KDL report JSON.
@@ -685,12 +721,14 @@ type K10ConfigurationSecuritySecurityContext struct {
 
 // K10ConfigurationSecurity mirrors the corresponding object in the KDL report JSON.
 type K10ConfigurationSecurity struct {
-	Authentication      K10ConfigurationSecurityAuthentication  `json:"authentication"`
-	Encryption          K10ConfigurationSecurityEncryption      `json:"encryption"`
-	FIPSMode            bool                                    `json:"fipsMode"`
-	NetworkPolicies     bool                                    `json:"networkPolicies"`
-	AuditLogging        K10ConfigurationSecurityAuditLogging    `json:"auditLogging"`
-	CustomCACertificate json.RawMessage                         `json:"customCaCertificate"` // always null in the source sample - type unverified
+	Authentication  K10ConfigurationSecurityAuthentication `json:"authentication"`
+	Encryption      K10ConfigurationSecurityEncryption     `json:"encryption"`
+	FIPSMode        bool                                   `json:"fipsMode"`
+	NetworkPolicies bool                                   `json:"networkPolicies"`
+	AuditLogging    K10ConfigurationSecurityAuditLogging   `json:"auditLogging"`
+	// CustomCACertificate is the name of the ConfigMap holding the bundle, null
+	// when K10 uses the system trust store.
+	CustomCACertificate *string                                 `json:"customCaCertificate"`
 	SecurityContext     K10ConfigurationSecuritySecurityContext `json:"securityContext"`
 	Scc                 bool                                    `json:"scc"`
 	Vap                 bool                                    `json:"vap"`
@@ -742,12 +780,13 @@ type K10ConfigurationDatastore struct {
 
 // K10ConfigurationPersistence mirrors the corresponding object in the KDL report JSON.
 type K10ConfigurationPersistence struct {
-	DefaultSize  string          `json:"defaultSize"`
-	CatalogSize  string          `json:"catalogSize"`
-	JobsSize     string          `json:"jobsSize"`
-	LoggingSize  string          `json:"loggingSize"`
-	MeteringSize string          `json:"meteringSize"`
-	StorageClass json.RawMessage `json:"storageClass"` // always null in the source sample - type unverified
+	DefaultSize  string `json:"defaultSize"`
+	CatalogSize  string `json:"catalogSize"`
+	JobsSize     string `json:"jobsSize"`
+	LoggingSize  string `json:"loggingSize"`
+	MeteringSize string `json:"meteringSize"`
+	// StorageClass is null when K10 uses the cluster default.
+	StorageClass *string `json:"storageClass"`
 }
 
 // K10ConfigurationExcludedApps mirrors the corresponding object in the KDL report JSON.
@@ -769,8 +808,10 @@ type K10ConfigurationGarbageCollector struct {
 
 // K10ConfigurationNonDefaultSettings mirrors the corresponding object in the KDL report JSON.
 type K10ConfigurationNonDefaultSettings struct {
-	Count int             `json:"count"`
-	Items json.RawMessage `json:"items"` // always null in the source sample - type unverified
+	Count int `json:"count"`
+	// Items is one comma-separated string rather than a list -- KDL.sh builds it
+	// by concatenation -- and null when nothing differs from the defaults.
+	Items *string `json:"items"`
 }
 
 // K10ConfigurationPolicyExclusion is one policy that deliberately excludes
@@ -805,8 +846,10 @@ type K10Configuration struct {
 	Features            K10ConfigurationFeatures            `json:"features"`
 	GarbageCollector    K10ConfigurationGarbageCollector    `json:"garbageCollector"`
 	LogLevel            string                              `json:"logLevel"`
-	ClusterName         json.RawMessage                     `json:"clusterName"` // always null in the source sample - type unverified
-	NonDefaultSettings  K10ConfigurationNonDefaultSettings  `json:"nonDefaultSettings"`
+	// ClusterName is the name the operator gave this cluster at install time,
+	// null when unset.
+	ClusterName        *string                            `json:"clusterName"`
+	NonDefaultSettings K10ConfigurationNonDefaultSettings `json:"nonDefaultSettings"`
 }
 
 // K10RBACAccessibility mirrors the corresponding object in the KDL report JSON.
@@ -971,10 +1014,21 @@ type RansomwareReadinessPillarsNetworkPolicies struct {
 
 // RansomwareReadinessPillarsTLSVerification mirrors the corresponding object in the KDL report JSON.
 type RansomwareReadinessPillarsTLSVerification struct {
-	Score               int               `json:"score"`
-	Max                 int               `json:"max"`
-	Evidence            bool              `json:"evidence"`
-	ProfilesSkippingTLS []json.RawMessage `json:"profilesSkippingTls"` // empty array in the source sample - element type unverified
+	Score    int  `json:"score"`
+	Max      int  `json:"max"`
+	Evidence bool `json:"evidence"`
+	// ProfilesSkippingTLS names the profiles that skip certificate verification.
+	// Typed from KDL.sh's emitter -- one object with a name -- because both
+	// samples come from clusters that verify TLS, so the list is empty in each,
+	// and while it was raw the pillar could show the deduction without ever
+	// naming the profile that caused it.
+	ProfilesSkippingTLS []RansomwareProfileSkippingTLS `json:"profilesSkippingTls"`
+}
+
+// RansomwareProfileSkippingTLS is one location profile with certificate
+// verification disabled.
+type RansomwareProfileSkippingTLS struct {
+	Name string `json:"name"`
 }
 
 // RansomwareReadinessPillars mirrors the corresponding object in the KDL report JSON.
@@ -1165,8 +1219,13 @@ type VolumeSnapshotClassesItem struct {
 
 // VolumeSnapshotClassesCSIDriversWithoutVSC mirrors the corresponding object in the KDL report JSON.
 type VolumeSnapshotClassesCSIDriversWithoutVSC struct {
-	Count   int               `json:"count"`
-	Drivers []json.RawMessage `json:"drivers"` // empty array in the source sample - element type unverified
+	Count int `json:"count"`
+	// Drivers are provisioner names, as a flat list of strings -- typed from
+	// KDL.sh's emitter, which builds it with `[.items[] | .provisioner] | unique`.
+	// Both samples come from clusters where every CSI driver has a matching class,
+	// so the list is empty in each, and while it was raw the warning that names the
+	// volumes Kasten cannot snapshot could never render.
+	Drivers []string `json:"drivers"`
 }
 
 // VolumeSnapshotClasses mirrors the corresponding object in the KDL report JSON.
@@ -1199,9 +1258,21 @@ type PoliciesWithoutExport struct {
 
 // RetentionAnalysisSnapshotRetentionHigh mirrors the corresponding object in the KDL report JSON.
 type RetentionAnalysisSnapshotRetentionHigh struct {
-	Count int               `json:"count"`
-	Items []json.RawMessage `json:"items"` // empty array in the source sample - element type unverified
-	Note  string            `json:"note"`
+	Count int                                          `json:"count"`
+	Items []RetentionAnalysisSnapshotRetentionHighItem `json:"items"`
+	Note  string                                       `json:"note"`
+}
+
+// RetentionAnalysisSnapshotRetentionHighItem is one policy keeping more local
+// snapshots than the threshold, with the highest retention tier it declares.
+//
+// Typed from KDL.sh's emitter rather than from a sample, for the same reason as
+// StuckActionItem: both available reports come from clusters inside the
+// threshold, so the list is empty in each -- and while it was json.RawMessage it
+// type-checked and rendered as a bare count with no way to say which policies.
+type RetentionAnalysisSnapshotRetentionHighItem struct {
+	Name string `json:"name"`
+	Max  int    `json:"max"`
 }
 
 // RetentionAnalysisSnapshotRetentionZero mirrors the corresponding object in the KDL report JSON.

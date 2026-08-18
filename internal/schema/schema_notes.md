@@ -52,6 +52,14 @@ type is a map.**
 | `nodeConsumption.assessed` (2.1.1) | Without it the renderer printed "0 / 0" for a node count that RBAC had denied — the exact misleading zero `KDL.sh` goes out of its way to avoid. |
 | `policyExclusions.byPolicy[].matchedNamespaces` (2.2.0) | Sibling of `patterns`, and `patterns` is a flat `[]string`, not the matchExpression this file first assumed. Both were wrong until a pass over the emitter caught them. |
 | `StuckActionItem`, `OrphanedRestorePointItem`, `ProfileValidationItem.Error` | Typed from the emitter, not from a sample: every available report comes from a healthy cluster, so all three lists are empty in both. While they were `json.RawMessage` they type-checked and were **unrenderable**, which is how three unhealthy-cluster tables silently rendered as a bare count. |
+| `RetentionAnalysisSnapshotRetentionHighItem` | Same story, same fix: `{name, max}` per the emitter. Both samples come from clusters inside the threshold, so the list is empty in each, and the section rendered a count with no way to say which policies. |
+| `PolicyRunStatsLastRunEntry.Duration` → `*int` | `KDL.sh` emits `null` when a run recorded no start or end time. As an `int` that decoded to `0`, which is a run that finished instantly rather than one whose duration is unknown. |
+| `VolumeSnapshotClassesCSIDriversWithoutVSC.Drivers` | A flat `[]string` of provisioner names per the emitter (`[.items[] | .provisioner] | unique`). Both samples come from clusters where every CSI driver has a matching class, so the list is empty in each — and while it was raw, the warning naming the volumes Kasten cannot snapshot could never render. |
+| `LicenseUnparseable` | `{secret, reason}` per the emitter. Both samples come from clusters whose licences all parsed, so the list is empty in each — and while it was raw, a cluster whose licence could not be read showed a parseable count below its secret count with no way to say which secret, or why. |
+| `Catalog.FreeSpacePercent`/`.UsedPercent` → `*int` | `KDL.sh` emits `null` when it could not run `df` in the catalog pod. As `int` that decoded to `0`, and 0% free is the most alarming line the section carries. The Go collector never fills them at all: a pod exec is a create against `pods/exec`, which the read-only Reader has no verb for. |
+| `RansomwareProfileSkippingTLS` | `{name}` per the emitter. Both samples come from clusters that verify TLS, so the list is empty in each — and while it was raw, the pillar could show a 0/5 deduction without ever naming the profile that caused it. |
+| `MultiCluster.ClusterCount` → `*int` | `KDL.sh` emits it only for a primary and `null` otherwise. As an `int` a standalone cluster reported `0`, which reads as a primary managing no clusters rather than as a cluster with no primary role to count for. |
+| `MultiCluster.PrimaryName`/`.ClusterID`, `K10ConfigurationSecurityEncryption.Details`, `…AuditLogging.Targets`, `K10ConfigurationSecurity.CustomCACertificate`, `K10ConfigurationPersistence.StorageClass`, `K10ConfigurationNonDefaultSettings.Items`, `K10Configuration.ClusterName` | All `*string` per the emitter, and all null in both samples because both come from standalone clusters with default security settings. Every one of them was unrendered while raw: the multi-cluster section showed a secondary with no primary, the security block never named the CA bundle or where the audit trail goes, and the tuned-settings count — the one line that makes four tables of numbers readable — was missing entirely. `NonDefaultSettings.Items` is worth singling out: it is **one comma-separated string**, not a list, because `KDL.sh` builds it by concatenation. |
 
 The 2.2.0 sections are **pointers** on purpose: `nil` means "the report came from
 an older KDL", which is not the same as "the section is empty". A renderer that
@@ -59,28 +67,16 @@ conflates the two will report a Kasten 9.0 feature as absent on a 2.1 report.
 
 ## Not verified — needs a report that exercises them
 
-These 16 fields were `null` or an empty list in **both** available samples, so
+These 4 fields were `null` or an empty list in **both** available samples, so
 their type is a guess and they are kept as `json.RawMessage` rather than typed
 wrongly. Each one is a small, isolated task: get a report from a cluster that
 exercises the field, look at the value, replace the type.
 
 | Struct | Field |
 |---|---|
-| `License` | `unparseable` |
-| `MultiCluster` | `primaryName` |
-| `MultiCluster` | `clusterId` |
 | `PolicyPresetsItem` | `frequency` |
 | `PolicyPresetsItem` | `retention` |
 | `PolicyAnalysis` | `unresolvablePolicies` |
-| `K10ConfigurationSecurityEncryption` | `details` |
-| `K10ConfigurationSecurityAuditLogging` | `targets` |
-| `K10ConfigurationSecurity` | `customCaCertificate` |
-| `K10ConfigurationPersistence` | `storageClass` |
-| `K10ConfigurationNonDefaultSettings` | `items` |
-| `K10Configuration` | `clusterName` |
-| `RansomwareReadinessPillarsTLSVerification` | `profilesSkippingTls` |
-| `VolumeSnapshotClassesCSIDriversWithoutVSC` | `drivers` |
-| `RetentionAnalysisSnapshotRetentionHigh` | `items` |
 | `ProfilesItem` | `protectionPeriod` |
 
 **`json.RawMessage` is not a free pass.** A field left raw type-checks but cannot

@@ -239,3 +239,33 @@ func TestFormatDuration(t *testing.T) {
 		}
 	}
 }
+
+// TestUnpopulatedSectionRendersAsUnknownNotAsAFinding: unpopulatedSections is
+// the producer saying it did not collect a section. kdl diff already honours it;
+// the page has to as well, because the page is what a customer reads. Rendering
+// the zero values instead turns a refused read into an expired licence and a
+// cluster where no policy has ever run.
+func TestUnpopulatedSectionRendersAsUnknownNotAsAFinding(t *testing.T) {
+	r := &schema.Report{
+		KDLVersion:          "2.2.0-go",
+		UnpopulatedSections: []string{"license", "disasterRecovery"},
+	}
+	// A licence section that was collected and found nothing renders very
+	// differently from one that was never collected, so compare against that.
+	collected := &schema.Report{KDLVersion: "2.2.0-go"}
+
+	uncollected := render(t, r)
+	baseline := render(t, collected)
+
+	if !strings.Contains(uncollected, "was not collected") {
+		t.Error("an unpopulated section does not say so on the page")
+	}
+	if uncollected == baseline {
+		t.Error("a declared-uncomputed report renders identically to one that collected everything")
+	}
+	// The section a report did NOT declare must still render its own verdict.
+	if strings.Count(uncollected, "was not collected") != 2 {
+		t.Errorf("got %d not-collected notices, want exactly the 2 declared sections",
+			strings.Count(uncollected, "was not collected"))
+	}
+}
