@@ -50,6 +50,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 // Run is the entry point for `kdl scan`.
@@ -192,7 +194,16 @@ func printSummary(w *os.File, res Result, version string, declared []string) {
 		// Said plainly rather than folded into the list above, because it is the
 		// one read whose absence is expected: get on nodes/proxy is not a
 		// permission K10 needs, so most clusters will not have granted it.
-		fmt.Fprintf(w, "\nCatalog free space not measured (needs `get nodes/proxy`): %v\n", err)
+		//
+		// The permission is named only when the error really is a refusal. A
+		// timeout or an unreachable kubelet would otherwise be reported as an RBAC
+		// problem, sending an operator to edit a role that was never the issue.
+		if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
+			fmt.Fprintf(w, "\nCatalog free space not measured: the scan may not read "+
+				"nodes/proxy. Grant `get` on it to include the figure.\n")
+		} else {
+			fmt.Fprintf(w, "\nCatalog free space not measured: %v\n", err)
+		}
 	}
 }
 
