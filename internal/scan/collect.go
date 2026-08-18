@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -41,6 +42,20 @@ type Result struct {
 	KubernetesVersion string
 	// KastenNamespace is the namespace the Kasten-scoped reads used.
 	KastenNamespace string
+	// CollectedAt is when the collection ran. Every age in the report -- a stuck
+	// action, a stale namespace -- is measured from it rather than from
+	// time.Now() at render time, so the same Result always builds the same
+	// report and a test can state what "now" is.
+	CollectedAt time.Time
+}
+
+// Now is the instant ages are measured from, falling back to the current time
+// for a Result assembled without one.
+func (r Result) Now() time.Time {
+	if r.CollectedAt.IsZero() {
+		return time.Now()
+	}
+	return r.CollectedAt
 }
 
 // Denials lists the keys whose read was refused, sorted for a stable report.
@@ -93,6 +108,7 @@ func Collect(ctx context.Context, r Reader, kastenNS string, parallelism int) Re
 	res := Result{
 		Collections:     make(map[string]Collection, len(all)),
 		KastenNamespace: kastenNS,
+		CollectedAt:     time.Now(),
 	}
 
 	if v, err := r.ServerVersion(); err == nil {

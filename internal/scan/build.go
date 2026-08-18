@@ -45,12 +45,21 @@ func Build(res Result) *kdl.Report {
 	buildMisc(res, r)
 	buildCoverage(res, r)
 	buildPolicyAnalysis(res, r)
+	buildProfileValidation(res, r)
+	buildFailedActions(res, r)
+	// One instant for every age in the report: two calls to Now() would let a
+	// stuck action and a stale namespace be measured against different clocks.
+	now := res.Now()
+	buildStuckActions(res, r, now)
+	buildNamespaceProtection(res, r, now)
+	buildRestorePointsByNamespace(res, r)
+	buildOrphanedRestorePoints(res, r)
 	markUnassessedChecks(r)
 
 	// Declared in the report itself, not only on stderr. A consumer that cannot
 	// tell "not computed" from "computed and empty" reads every uncollected
 	// section as a cluster with nothing in it.
-	r.UnpopulatedSections = UnpopulatedSections()
+	r.UnpopulatedSections = unpopulatedFor(res)
 
 	return r
 }
@@ -96,14 +105,55 @@ func UnpopulatedSections() []string {
 	return []string{
 		"ransomwareReadiness", "bestPractices", "policyRunStats.effectiveRpo",
 		"retentionAnalysis", "dataUsage", "k10Configuration", "disasterRecovery",
-		"catalog", "orphanedRestorePoints", "stuckActions", "failedActionsTop5",
-		"namespaceProtectionStatus", "restorePointsByNamespace", "profileValidation",
-		"multiCluster", "monitoring", "license",
+		"catalog", "multiCluster", "monitoring", "license",
 		// policyAnalysis IS computed, but only partly: redundancy is not. Naming
 		// the sub-path keeps the rest of the section comparable while stopping a
 		// structural zero from reading as "21 redundant pairs resolved".
 		"policyAnalysis.summary.redundantPairsGenuine",
 	}
+}
+
+// sectionInputs names the collections each computed section is derived from.
+//
+// "Not implemented" is not the only way a section ends up empty: a section whose
+// input was refused by RBAC or failed to read is equally uncomputed, and its
+// zero value is equally indistinguishable from a real empty. Declaring those per
+// run is what stops a scan by a restricted service account from diffing as a
+// cluster that lost every restore point it had.
+//
+// Absence does not disqualify a section. A cluster that does not serve
+// RestorePoints genuinely holds none, so zero there is a fact rather than a gap
+// -- which is the whole reason Collection keeps Absent apart from Denied.
+//
+// Every requirement here is one the section is *wrong* without, not merely
+// thinner. failedActionsTop5 names all three action listings because "the five
+// most recent failures" computed from two of them is a claim about all three.
+var sectionInputs = map[string][]string{
+	"profileValidation":         {"profiles"},
+	"failedActionsTop5":         {"backupActions", "exportActions", "restoreActions"},
+	"stuckActions":              {"backupActions", "exportActions", "restoreActions"},
+	"namespaceProtectionStatus": {"namespaces", "backupActions", "exportActions", "restoreActions"},
+	"restorePointsByNamespace":  {"restorePoints"},
+	"orphanedRestorePoints":     {"restorePoints", "policies"},
+}
+
+// unpopulatedFor is the list declared in one report: the sections this build
+// cannot compute at all, plus the ones it can but whose input this run did not
+// return.
+func unpopulatedFor(res Result) []string {
+	out := UnpopulatedSections()
+
+	var degraded []string
+	for section, inputs := range sectionInputs {
+		for _, key := range inputs {
+			if c, present := res.Collections[key]; !present || (!c.OK() && !c.Absent) {
+				degraded = append(degraded, section)
+				break
+			}
+		}
+	}
+	sort.Strings(degraded)
+	return append(out, degraded...)
 }
 
 // buildRBACLimited records denied reads as a first-class result. Without it a

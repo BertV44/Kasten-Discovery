@@ -22,8 +22,9 @@
 //
 // # What this collector does not do yet
 //
-// It populates the inventory and the two analyses that the typed schema already
-// knows how to compute (coverage, policy analysis). The scoring sections --
+// It populates the inventory, the analyses the typed schema knows how to derive
+// (coverage, policy analysis) and the sections that are a straight reading of
+// the action, restore-point and profile listings. The scoring sections --
 // ransomware readiness, the 16 best-practice checks, effective RPO -- are not
 // computed; UnpopulatedSections lists them, and `kdl scan` prints that list on
 // every run. This is deliberate: those sections are verdicts, and a verdict
@@ -103,7 +104,7 @@ This command never writes to the cluster.
 	// reached is worse than no report: it looks like a cluster with nothing in
 	// it. Refuse before writing anything.
 	if res.TotalFailure() {
-		printSummary(os.Stderr, res, ScanVersion)
+		printSummary(os.Stderr, res, ScanVersion, UnpopulatedSections())
 		return fmt.Errorf("scan: every read failed -- the cluster was not reached; no report written")
 	}
 
@@ -126,7 +127,7 @@ This command never writes to the cluster.
 		fmt.Fprintf(os.Stderr, "[OK] report written: %s\n", *out)
 	}
 
-	printSummary(os.Stderr, res, report.KDLVersion)
+	printSummary(os.Stderr, res, report.KDLVersion, report.UnpopulatedSections)
 	return nil
 }
 
@@ -134,7 +135,7 @@ This command never writes to the cluster.
 // stdout. It states what was denied and what was not computed, because a reader
 // comparing this against a KDL.sh report needs to tell "nothing found" from
 // "never collected".
-func printSummary(w *os.File, res Result, version string) {
+func printSummary(w *os.File, res Result, version string, declared []string) {
 	fmt.Fprintf(w, "\nkdl scan (%s), Kubernetes %s, namespace %s\n",
 		version, orUnknown(res.KubernetesVersion), res.KastenNamespace)
 
@@ -161,8 +162,33 @@ func printSummary(w *os.File, res Result, version string) {
 		fmt.Fprintf(w, "\nNot served by this cluster (normal): %s\n", strings.Join(sorted(absent), ", "))
 	}
 
+	notImplemented := UnpopulatedSections()
 	fmt.Fprintf(w, "\nSections this collector does not compute yet:\n  %s\n",
-		strings.Join(UnpopulatedSections(), ", "))
+		strings.Join(notImplemented, ", "))
+
+	// A section the collector *can* compute but whose input this run did not
+	// return is a different message, and the more urgent one: it is fixable by
+	// granting a permission or retrying, and until then the section is unknown
+	// rather than empty.
+	if skipped := without(declared, notImplemented); len(skipped) > 0 {
+		fmt.Fprintf(w, "\nSections skipped in THIS report because a read did not return:\n  %s\n",
+			strings.Join(skipped, ", "))
+	}
+}
+
+// without returns the elements of a not present in b.
+func without(a, b []string) []string {
+	in := make(map[string]bool, len(b))
+	for _, s := range b {
+		in[s] = true
+	}
+	var out []string
+	for _, s := range a {
+		if !in[s] {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func orUnknown(s string) string {
