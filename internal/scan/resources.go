@@ -58,6 +58,12 @@ var (
 	// policy has run, which is why the export-storage and licensing figures they
 	// carry are optional. ReportActions are the runs themselves, and say whether
 	// that policy is working.
+	//
+	// The version on the reporting group is inferred from the other Kasten groups,
+	// which are all v1alpha1: KDL.sh names the resource without one and lets
+	// kubectl resolve it. If it is wrong, discovery answers "not served" and the
+	// export figures go quietly absent rather than wrong -- but reportsPolicy will
+	// then say the policy exists and has run, which is the signal to check this.
 	gvrK10Reports    = k8sschema.GroupVersionResource{Group: "reporting.kio.kasten.io", Version: "v1alpha1", Resource: "reports"}
 	gvrReportActions = k8sschema.GroupVersionResource{Group: "actions.kio.kasten.io", Version: "v1alpha1", Resource: "reportactions"}
 
