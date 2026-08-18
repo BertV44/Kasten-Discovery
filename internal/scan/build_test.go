@@ -758,3 +758,131 @@ func TestNodeConsumptionAssessmentMatchesWhatWasRead(t *testing.T) {
 			got, kdl.StatusNotAssessed)
 	}
 }
+
+// TestRedundantPairsSeparateCatchallOverlapFromRealDuplication is what makes the
+// section usable rather than noise. On a cluster with a catch-all policy every
+// other policy overlaps it by construction, so a raw pair count grows with the
+// policy count and names no action: a 30-policy cluster reports 29 pairs. Two
+// specific policies overlapping is the actionable finding -- somebody is paying
+// for two snapshots of the same namespace.
+func TestRedundantPairsSeparateCatchallOverlapFromRealDuplication(t *testing.T) {
+	backupOn := func(patterns ...any) map[string]any {
+		spec := map[string]any{
+			"frequency": "@daily",
+			"actions":   []any{map[string]any{"action": "backup"}},
+		}
+		if len(patterns) > 0 {
+			spec["selector"] = map[string]any{"matchExpressions": []any{
+				map[string]any{
+					"key":      "k10.kasten.io/appNamespace",
+					"operator": "In",
+					"values":   patterns,
+				},
+			}}
+		}
+		return spec
+	}
+
+	r := buildFrom(t, map[string][]unstructured.Unstructured{
+		"namespaces": {obj("Namespace", "shop", nil), obj("Namespace", "billing", nil)},
+		"policies": {
+			policy("everything", backupOn()),       // catch-all
+			policy("shop-daily", backupOn("shop")), // overlaps the catch-all
+			policy("shop-again", backupOn("shop")), // and genuinely duplicates shop-daily
+			policy("billing-daily", backupOn("billing")),
+		},
+	})
+
+	sum := r.PolicyAnalysis.Summary
+	// everything×shop-daily, everything×shop-again, everything×billing-daily are
+	// catch-all overlaps; shop-daily×shop-again is the real duplication.
+	if sum.RedundantPairsGenuine != 1 {
+		t.Errorf("redundantPairsGenuine = %d, want 1 (shop-daily and shop-again): %+v",
+			sum.RedundantPairsGenuine, r.PolicyAnalysis.RedundantPairs)
+	}
+	if sum.RedundantPairsWithCatchall != 3 {
+		t.Errorf("redundantPairsWithCatchall = %d, want 3", sum.RedundantPairsWithCatchall)
+	}
+	if sum.RedundantPairCount != 4 {
+		t.Errorf("redundantPairCount = %d, want 4 in total", sum.RedundantPairCount)
+	}
+
+	var genuine *kdl.PolicyAnalysisRedundantPair
+	for i := range r.PolicyAnalysis.RedundantPairs {
+		if !r.PolicyAnalysis.RedundantPairs[i].InvolvesCatchall {
+			genuine = &r.PolicyAnalysis.RedundantPairs[i]
+		}
+	}
+	if genuine == nil {
+		t.Fatal("no genuine pair recorded")
+	}
+	if len(genuine.SharedNamespaces) != 1 || genuine.SharedNamespaces[0] != "shop" {
+		t.Errorf("sharedNamespaces = %v, want just shop", genuine.SharedNamespaces)
+	}
+	if !contains(genuine.SharedActions, "backup") {
+		t.Errorf("sharedActions = %v, want backup among them", genuine.SharedActions)
+	}
+	if !genuine.SameFrequency {
+		t.Error("sameFrequency = false on two @daily policies; a reader uses it to tell " +
+			"duplication from a deliberate retention tier")
+	}
+	if r.NotCollected("policyAnalysis.summary.redundantPairsGenuine") {
+		t.Error("the redundancy sub-path is still declared uncomputed")
+	}
+}
+
+// TestPoliciesOverlappingWithoutASharedActionAreNotRedundant: an export policy
+// and a backup policy on the same namespace do different work.
+func TestPoliciesOverlappingWithoutASharedActionAreNotRedundant(t *testing.T) {
+	sel := map[string]any{"matchExpressions": []any{
+		map[string]any{
+			"key": "k10.kasten.io/appNamespace", "operator": "In", "values": []any{"shop"},
+		},
+	}}
+	r := buildFrom(t, map[string][]unstructured.Unstructured{
+		"namespaces": {obj("Namespace", "shop", nil)},
+		"policies": {
+			policy("backs-up", map[string]any{
+				"frequency": "@daily", "selector": sel,
+				"actions": []any{map[string]any{"action": "backup"}},
+			}),
+			policy("imports", map[string]any{
+				"frequency": "@daily", "selector": sel,
+				"actions": []any{map[string]any{"action": "import"}},
+			}),
+		},
+	})
+
+	if got := r.PolicyAnalysis.Summary.RedundantPairCount; got != 0 {
+		t.Errorf("redundantPairCount = %d, want 0: the two policies share a namespace but no action", got)
+	}
+}
+
+// TestReportsPolicyExplainsAbsentExportFigures: the export-storage numbers come
+// from this policy's output, so a reader who finds them missing needs to see why
+// here rather than concluding the exports are empty.
+func TestReportsPolicyExplainsAbsentExportFigures(t *testing.T) {
+	absent := buildFrom(t, map[string][]unstructured.Unstructured{})
+	if absent.ReportsPolicy.Exists {
+		t.Error("reportsPolicy.exists = true with no such policy")
+	}
+	if absent.ReportsPolicy.Note == "" {
+		t.Error("reportsPolicy carries no note explaining what its absence costs")
+	}
+
+	present := buildFrom(t, map[string][]unstructured.Unstructured{
+		"policies": {policy("k10-system-reports-policy", map[string]any{"frequency": "@daily"})},
+		"reportactions": {obj("ReportAction", "run-1", map[string]any{
+			"status": map[string]any{"state": "Complete"},
+		})},
+	})
+	if !present.ReportsPolicy.Exists || present.ReportsPolicy.Frequency != "@daily" {
+		t.Errorf("reportsPolicy = %+v, want it found with its frequency", present.ReportsPolicy)
+	}
+	if present.ReportsPolicy.ReportActionsCount != 1 {
+		t.Errorf("reportActionsCount = %d, want 1", present.ReportsPolicy.ReportActionsCount)
+	}
+	if got := present.ReportsPolicy.LastRun.State; got != "Complete" {
+		t.Errorf("lastRun.state = %q, want Complete", got)
+	}
+}

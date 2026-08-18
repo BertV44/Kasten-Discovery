@@ -72,6 +72,7 @@ func Build(res Result) *kdl.Report {
 	buildCatalog(res, r)
 	buildDataUsage(res, r)
 	buildLicense(res, r, now)
+	buildReportsPolicy(res, r)
 	buildRestorePointsByNamespace(res, r)
 	buildOrphanedRestorePoints(res, r)
 
@@ -118,10 +119,6 @@ func Build(res Result) *kdl.Report {
 // empty sections are "nothing found" and which are "not implemented".
 func UnpopulatedSections() []string {
 	return []string{
-		// policyAnalysis IS computed, but only partly: redundancy is not. Naming
-		// the sub-path keeps the rest of the section comparable while stopping a
-		// structural zero from reading as "21 redundant pairs resolved".
-		"policyAnalysis.summary.redundantPairsGenuine",
 		// The catalog's free space is the one figure this collector structurally
 		// cannot produce: it is measured by running df inside the catalog pod, and
 		// a pod exec is a create against pods/exec -- a verb the read-only Reader
@@ -186,6 +183,9 @@ var sectionInputs = map[string][]string{
 	// the entitlement. A denied read there is the difference between "no licence
 	// installed" and "we could not look", and those lead opposite ways.
 	"license": {"licenseSecrets"},
+	// The reporting policy's own health: whether it exists, and whether its runs
+	// are succeeding.
+	"reportsPolicy": {"policies", "reportActions"},
 }
 
 // unpopulatedFor is the list declared in one report: the sections this build
@@ -1173,12 +1173,163 @@ func buildPolicyAnalysis(res Result, r *kdl.Report) {
 		}
 	}
 
+	genuine, withCatchall := buildRedundantPairs(r, existing)
+
 	r.PolicyAnalysis.Summary = kdl.PolicyAnalysisSummary{
-		TotalPolicies:          analysed,
-		EmptyCount:             len(r.PolicyAnalysis.EmptyPolicies),
-		WithNonExistingNSCount: len(r.PolicyAnalysis.PoliciesWithNonExistingReferences),
+		TotalPolicies:              analysed,
+		EmptyCount:                 len(r.PolicyAnalysis.EmptyPolicies),
+		WithNonExistingNSCount:     len(r.PolicyAnalysis.PoliciesWithNonExistingReferences),
+		RedundantPairCount:         len(r.PolicyAnalysis.RedundantPairs),
+		RedundantPairsGenuine:      genuine,
+		RedundantPairsWithCatchall: withCatchall,
 	}
-	r.PolicyAnalysis.Note = "App policies only (system DR/reports policies excluded). Redundancy analysis is not computed by the Go collector yet."
+	r.PolicyAnalysis.Note = "Scope: app policies only (system DR/reports excluded). " +
+		"Empty = selector resolves to 0 existing namespaces. Redundant = pair of policies " +
+		"sharing >=1 namespace AND >=1 action. Pairs flagged involvesCatchall=true are " +
+		"by-design when a catch-all policy exists; genuine pairs are the actionable subset."
+}
+
+// buildRedundantPairs finds pairs of policies that back up the same namespace
+// with the same action.
+//
+// The catch-all split is what makes the section usable rather than noise. On a
+// cluster with one catch-all policy, every other policy overlaps it by
+// construction, so a raw pair count grows with the number of policies and says
+// nothing: a 30-policy cluster reports 29 pairs and no action to take. A pair of
+// two *specific* policies overlapping is the actionable finding -- somebody is
+// paying for two snapshots of the same namespace -- so the two counts are kept
+// apart and the report says which is which.
+func buildRedundantPairs(r *kdl.Report, existing map[string]bool) (genuine, withCatchall int) {
+	// Resolve each policy to the namespaces it actually selects, once. Doing it
+	// inside the pair loop would be quadratic in namespaces as well as policies.
+	type resolved struct {
+		item       kdl.PoliciesItem
+		namespaces map[string]bool
+		catchall   bool
+	}
+	var policies []resolved
+	for _, p := range r.Policies.Items {
+		if isSystemPolicy(p.Name) || p.EffectiveScope() != kdl.ScopeNamespace {
+			continue
+		}
+		selected := map[string]bool{}
+		excluded := p.Selector.ExcludedNamespacePatterns()
+		for ns := range existing {
+			if kdl.GlobAny(excluded, ns) {
+				continue
+			}
+			if p.Selector.All || kdl.GlobAny(p.Selector.NamespacePatterns(), ns) {
+				selected[ns] = true
+			}
+		}
+		policies = append(policies, resolved{item: p, namespaces: selected, catchall: p.Selector.All})
+	}
+
+	for i := 0; i < len(policies); i++ {
+		for j := i + 1; j < len(policies); j++ {
+			a, b := policies[i], policies[j]
+
+			shared := make([]string, 0)
+			for ns := range a.namespaces {
+				if b.namespaces[ns] {
+					shared = append(shared, ns)
+				}
+			}
+			if len(shared) == 0 {
+				continue
+			}
+			sharedActions := intersect(a.item.Actions, b.item.Actions)
+			if len(sharedActions) == 0 {
+				continue
+			}
+			sort.Strings(shared)
+
+			pair := kdl.PolicyAnalysisRedundantPair{
+				Policies:             []string{a.item.Name, b.item.Name},
+				SharedActions:        sharedActions,
+				SameFrequency:        sameFrequency(a.item, b.item),
+				InvolvesCatchall:     a.catchall || b.catchall,
+				SharedNamespaceCount: len(shared),
+				SharedNamespaces:     shared,
+			}
+			if pair.InvolvesCatchall {
+				withCatchall++
+			} else {
+				genuine++
+			}
+			r.PolicyAnalysis.RedundantPairs = append(r.PolicyAnalysis.RedundantPairs, pair)
+		}
+	}
+	sort.Slice(r.PolicyAnalysis.RedundantPairs, func(i, j int) bool {
+		x, y := r.PolicyAnalysis.RedundantPairs[i], r.PolicyAnalysis.RedundantPairs[j]
+		if x.Policies[0] != y.Policies[0] {
+			return x.Policies[0] < y.Policies[0]
+		}
+		return x.Policies[1] < y.Policies[1]
+	})
+	return genuine, withCatchall
+}
+
+// intersect returns the actions two policies share, sorted.
+func intersect(a, b []string) []string {
+	in := make(map[string]bool, len(b))
+	for _, v := range b {
+		in[v] = true
+	}
+	var out []string
+	for _, v := range a {
+		if in[v] {
+			out = append(out, v)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sameFrequency reports whether two policies run on the same schedule. Two
+// policies overlapping on different schedules may well be deliberate -- a daily
+// and a monthly copy of the same namespace -- so the flag lets a reader tell
+// duplication from a retention tier.
+func sameFrequency(a, b kdl.PoliciesItem) bool {
+	if a.Frequency == nil || b.Frequency == nil {
+		return a.Frequency == nil && b.Frequency == nil
+	}
+	return *a.Frequency == *b.Frequency
+}
+
+// buildReportsPolicy reports whether K10's own reporting policy exists and is
+// running. It is the prerequisite for the export-storage figures in dataUsage,
+// so a reader seeing those absent can find out here why.
+func buildReportsPolicy(res Result, r *kdl.Report) {
+	const reportsPolicyName = "k10-system-reports-policy"
+
+	rp := &r.ReportsPolicy
+	rp.Frequency = naValue
+	rp.LastRun = kdl.ReportsPolicyLastRun{State: naValue, Timestamp: naValue}
+	rp.Note = "The reporting policy produces the export-storage and licensing figures; " +
+		"without it those are absent rather than zero."
+
+	for _, o := range res.Items("policies") {
+		if name(o) != reportsPolicyName {
+			continue
+		}
+		rp.Exists = true
+		rp.Frequency = strOr(o.Object, "manual", "spec", "frequency")
+		break
+	}
+
+	actions := res.Items("reportActions")
+	rp.ReportActionsCount = len(actions)
+	newest := ""
+	for _, o := range actions {
+		if ts := creationTimestamp(o); ts >= newest {
+			newest = ts
+			rp.LastRun = kdl.ReportsPolicyLastRun{
+				State:     strOr(o.Object, "Unknown", "status", "state"),
+				Timestamp: ts,
+			}
+		}
+	}
 }
 
 // labelsMatch reports whether every required label is present with the required
