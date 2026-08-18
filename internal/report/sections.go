@@ -135,11 +135,18 @@ func policyRunStatsSection(r *schema.Report) Section {
 			})
 			continue
 		}
+		// A run that recorded no duration -- still in flight, or missing a
+		// start or end time -- prints as unknown rather than as a zero-length
+		// backup.
+		duration := naValue
+		if p.LastRun.Duration != nil {
+			duration = formatDuration(float64(*p.LastRun.Duration))
+		}
 		t.Rows = append(t.Rows, []Cell{
 			boldCell(p.Name),
 			dateCell(p.LastRun.Timestamp),
 			stateCell(p.LastRun.State),
-			cell(formatDuration(float64(p.LastRun.Duration))),
+			cell(duration),
 		})
 	}
 
@@ -1139,9 +1146,16 @@ func retentionAnalysisSection(r *schema.Report) Section {
 			ra.ExportWithoutExplicitRetention.Items...))
 	}
 	if ra.SnapshotRetentionHigh.Count > 0 {
+		// Naming the policies and the tier that tripped the threshold: the count
+		// alone was unactionable, which is what this list looked like while its
+		// element type was unmodelled.
+		items := make([]string, 0, len(ra.SnapshotRetentionHigh.Items))
+		for _, it := range ra.SnapshotRetentionHigh.Items {
+			items = append(items, fmt.Sprintf("%s (max %d)", it.Name, it.Max))
+		}
 		s.Boxes = append(s.Boxes, infoBox(fmt.Sprintf(
 			"ℹ %d policy(ies) keep a high number of local snapshots. %s",
-			ra.SnapshotRetentionHigh.Count, ra.SnapshotRetentionHigh.Note)))
+			ra.SnapshotRetentionHigh.Count, ra.SnapshotRetentionHigh.Note), items...))
 	}
 	if len(s.Boxes) == 0 {
 		if r.Policies.Count == 0 {

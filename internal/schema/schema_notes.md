@@ -52,6 +52,8 @@ type is a map.**
 | `nodeConsumption.assessed` (2.1.1) | Without it the renderer printed "0 / 0" for a node count that RBAC had denied — the exact misleading zero `KDL.sh` goes out of its way to avoid. |
 | `policyExclusions.byPolicy[].matchedNamespaces` (2.2.0) | Sibling of `patterns`, and `patterns` is a flat `[]string`, not the matchExpression this file first assumed. Both were wrong until a pass over the emitter caught them. |
 | `StuckActionItem`, `OrphanedRestorePointItem`, `ProfileValidationItem.Error` | Typed from the emitter, not from a sample: every available report comes from a healthy cluster, so all three lists are empty in both. While they were `json.RawMessage` they type-checked and were **unrenderable**, which is how three unhealthy-cluster tables silently rendered as a bare count. |
+| `RetentionAnalysisSnapshotRetentionHighItem` | Same story, same fix: `{name, max}` per the emitter. Both samples come from clusters inside the threshold, so the list is empty in each, and the section rendered a count with no way to say which policies. |
+| `PolicyRunStatsLastRunEntry.Duration` → `*int` | `KDL.sh` emits `null` when a run recorded no start or end time. As an `int` that decoded to `0`, which is a run that finished instantly rather than one whose duration is unknown. |
 
 The 2.2.0 sections are **pointers** on purpose: `nil` means "the report came from
 an older KDL", which is not the same as "the section is empty". A renderer that
@@ -59,7 +61,7 @@ conflates the two will report a Kasten 9.0 feature as absent on a 2.1 report.
 
 ## Not verified — needs a report that exercises them
 
-These 16 fields were `null` or an empty list in **both** available samples, so
+These 15 fields were `null` or an empty list in **both** available samples, so
 their type is a guess and they are kept as `json.RawMessage` rather than typed
 wrongly. Each one is a small, isolated task: get a report from a cluster that
 exercises the field, look at the value, replace the type.
@@ -80,7 +82,6 @@ exercises the field, look at the value, replace the type.
 | `K10Configuration` | `clusterName` |
 | `RansomwareReadinessPillarsTLSVerification` | `profilesSkippingTls` |
 | `VolumeSnapshotClassesCSIDriversWithoutVSC` | `drivers` |
-| `RetentionAnalysisSnapshotRetentionHigh` | `items` |
 | `ProfilesItem` | `protectionPeriod` |
 
 **`json.RawMessage` is not a free pass.** A field left raw type-checks but cannot

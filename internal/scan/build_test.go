@@ -695,7 +695,7 @@ func TestEveryCollectedTargetFeedsTheReport(t *testing.T) {
 		"namespaces": true, "storageClasses": true, "volumeSnapshotClasses": true,
 		"k10Pods": true, "k10Deployments": true, "policies": true, "profiles": true,
 		"policyPresets": true, "transformSets": true, "blueprintBindings": true,
-		"blueprints": true, "backupActions": true, "exportActions": true,
+		"blueprints": true, "runActions": true, "backupActions": true, "exportActions": true,
 		"restoreActions": true, "restorePoints": true, "clusterRoles": true,
 		"clusterRoleBindings": true, "roles": true, "roleBindings": true,
 		"routes": true, "scc": true, "virtualMachines": true,

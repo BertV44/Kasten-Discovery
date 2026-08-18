@@ -515,10 +515,14 @@ type PolicyAnalysis struct {
 
 // PolicyRunStatsLastRunEntry mirrors the corresponding object in the KDL report JSON.
 type PolicyRunStatsLastRunEntry struct {
-	Timestamp string  `json:"timestamp"`
-	State     string  `json:"state"`
-	Duration  int     `json:"duration"`
-	Error     *string `json:"error"`
+	Timestamp string `json:"timestamp"`
+	State     string `json:"state"`
+	// Duration is null while a run is still in flight and on runs that recorded
+	// no start or end time -- KDL.sh emits `null` on that path. It was an int
+	// here, which decoded that null to 0 and rendered it as a run that finished
+	// instantly.
+	Duration *int    `json:"duration"`
+	Error    *string `json:"error"`
 }
 
 // PolicyRunStatsLastRun mirrors the corresponding object in the KDL report JSON.
@@ -1199,9 +1203,21 @@ type PoliciesWithoutExport struct {
 
 // RetentionAnalysisSnapshotRetentionHigh mirrors the corresponding object in the KDL report JSON.
 type RetentionAnalysisSnapshotRetentionHigh struct {
-	Count int               `json:"count"`
-	Items []json.RawMessage `json:"items"` // empty array in the source sample - element type unverified
-	Note  string            `json:"note"`
+	Count int                                          `json:"count"`
+	Items []RetentionAnalysisSnapshotRetentionHighItem `json:"items"`
+	Note  string                                       `json:"note"`
+}
+
+// RetentionAnalysisSnapshotRetentionHighItem is one policy keeping more local
+// snapshots than the threshold, with the highest retention tier it declares.
+//
+// Typed from KDL.sh's emitter rather than from a sample, for the same reason as
+// StuckActionItem: both available reports come from clusters inside the
+// threshold, so the list is empty in each -- and while it was json.RawMessage it
+// type-checked and rendered as a bare count with no way to say which policies.
+type RetentionAnalysisSnapshotRetentionHighItem struct {
+	Name string `json:"name"`
+	Max  int    `json:"max"`
 }
 
 // RetentionAnalysisSnapshotRetentionZero mirrors the corresponding object in the KDL report JSON.

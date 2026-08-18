@@ -52,6 +52,8 @@ func Build(res Result) *kdl.Report {
 	now := res.Now()
 	buildStuckActions(res, r, now)
 	buildNamespaceProtection(res, r, now)
+	buildPolicyRunStats(res, r, now)
+	buildRetentionAnalysis(r)
 	buildRestorePointsByNamespace(res, r)
 	buildOrphanedRestorePoints(res, r)
 	markUnassessedChecks(r)
@@ -103,8 +105,8 @@ func markUnassessedChecks(r *kdl.Report) {
 // empty sections are "nothing found" and which are "not implemented".
 func UnpopulatedSections() []string {
 	return []string{
-		"ransomwareReadiness", "bestPractices", "policyRunStats.effectiveRpo",
-		"retentionAnalysis", "dataUsage", "k10Configuration", "disasterRecovery",
+		"ransomwareReadiness", "bestPractices", "dataUsage",
+		"k10Configuration", "disasterRecovery",
 		"catalog", "multiCluster", "monitoring", "license",
 		// policyAnalysis IS computed, but only partly: redundancy is not. Naming
 		// the sub-path keeps the rest of the section comparable while stopping a
@@ -135,6 +137,12 @@ var sectionInputs = map[string][]string{
 	"namespaceProtectionStatus": {"namespaces", "backupActions", "exportActions", "restoreActions"},
 	"restorePointsByNamespace":  {"restorePoints"},
 	"orphanedRestorePoints":     {"restorePoints", "policies"},
+	"retentionAnalysis":         {"policies"},
+	// All three policyRunStats sub-sections are measured from RunActions and are
+	// named separately, because the diff compares effectiveRpo on its own.
+	"policyRunStats.lastRuns":        {"policies", "runActions"},
+	"policyRunStats.averageDuration": {"runActions"},
+	"policyRunStats.effectiveRpo":    {"policies", "runActions"},
 }
 
 // unpopulatedFor is the list declared in one report: the sections this build

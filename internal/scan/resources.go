@@ -36,6 +36,7 @@ var (
 	gvrTransformSets  = k8sschema.GroupVersionResource{Group: "config.kio.kasten.io", Version: "v1alpha1", Resource: "transformsets"}
 	gvrBlueprintBinds = k8sschema.GroupVersionResource{Group: "config.kio.kasten.io", Version: "v1alpha1", Resource: "blueprintbindings"}
 
+	gvrRunActions     = k8sschema.GroupVersionResource{Group: "actions.kio.kasten.io", Version: "v1alpha1", Resource: "runactions"}
 	gvrBackupActions  = k8sschema.GroupVersionResource{Group: "actions.kio.kasten.io", Version: "v1alpha1", Resource: "backupactions"}
 	gvrExportActions  = k8sschema.GroupVersionResource{Group: "actions.kio.kasten.io", Version: "v1alpha1", Resource: "exportactions"}
 	gvrRestoreActions = k8sschema.GroupVersionResource{Group: "actions.kio.kasten.io", Version: "v1alpha1", Resource: "restoreactions"}
@@ -76,6 +77,9 @@ type target struct {
 // on one of them set rbacLimited on the whole report, flagging it as
 // RBAC-degraded because a read that feeds no section was refused. Add them back
 // together with the code that consumes them, not before.
+//
+// runActions came back on those terms: policyRunStats (runstats.go) is the code
+// that consumes it, and nothing else in the report needs it.
 func targets(kastenNS string) []target {
 	_ = kastenNS // namespace is applied by the collector, listed here for clarity
 	return []target{
@@ -93,6 +97,10 @@ func targets(kastenNS string) []target {
 		{key: "blueprintBindings", gvr: gvrBlueprintBinds, optional: true},
 		{key: "blueprints", gvr: gvrBlueprints, optional: true},
 
+		// RunActions are the per-policy run records. They are the only objects
+		// carrying startTime and endTime, so every duration in the report comes
+		// from here rather than from the per-object actions.
+		{key: "runActions", gvr: gvrRunActions},
 		{key: "backupActions", gvr: gvrBackupActions},
 		{key: "exportActions", gvr: gvrExportActions},
 		{key: "restoreActions", gvr: gvrRestoreActions},
