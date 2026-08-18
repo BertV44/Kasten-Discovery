@@ -219,7 +219,8 @@ func buildMultiCluster(res Result, r *kdl.Report) {
 		// at zero, which on a primary means the records could not be read rather
 		// than that no cluster has joined -- mcClusters is named in
 		// sectionInputs for exactly that reason.
-		r.MultiCluster.ClusterCount = len(res.Items("mcClusters"))
+		joined := len(res.Items("mcClusters"))
+		r.MultiCluster.ClusterCount = &joined
 		return
 	}
 

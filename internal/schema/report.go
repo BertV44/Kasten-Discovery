@@ -246,8 +246,12 @@ type Health struct {
 
 // MultiCluster mirrors the corresponding object in the KDL report JSON.
 type MultiCluster struct {
-	Role         string `json:"role"`
-	ClusterCount int    `json:"clusterCount"`
+	Role string `json:"role"`
+	// ClusterCount is null off a primary -- KDL.sh emits it only for that role,
+	// because a secondary manages nothing and a standalone cluster is not part of
+	// any federation. As an int it emitted 0, which reads as a primary managing no
+	// clusters rather than as a cluster that has no primary role to count for.
+	ClusterCount *int `json:"clusterCount"`
 	// PrimaryName and ClusterID are set only on a secondary, from the join
 	// ConfigMap, and are null on a primary or a standalone cluster. Typed from
 	// KDL.sh's emitter: both source samples are standalone clusters, so both

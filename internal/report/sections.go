@@ -87,7 +87,9 @@ func multiClusterSection(r *schema.Report) Section {
 		CardClass: "mc-card",
 		Rows: nonEmptyRows([]Row{
 			badgeRow("Role", class, strings.ToUpper(mc.Role)),
-			row("Managed Clusters", itoa(mc.ClusterCount)),
+			// Only a primary manages clusters, so the row is absent rather than zero
+			// elsewhere -- nonEmptyRows drops it.
+			row("Managed Clusters", clusterCountText(mc.ClusterCount)),
 			// Only a secondary carries these, and on a secondary they are the
 			// section's whole point: they name the cluster whose policies this
 			// one is executing. Both went unrendered while untyped.
@@ -95,6 +97,16 @@ func multiClusterSection(r *schema.Report) Section {
 			row("Cluster ID", deref(mc.ClusterID, "")),
 		}),
 	}
+}
+
+// clusterCountText renders the managed-cluster count, empty when the report
+// carries none: a primary with zero joined clusters and a cluster with no primary
+// role at all are different facts, and only the first is a count.
+func clusterCountText(n *int) string {
+	if n == nil {
+		return ""
+	}
+	return itoa(*n)
 }
 
 func drSection(r *schema.Report) Section {

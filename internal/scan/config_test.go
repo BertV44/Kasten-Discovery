@@ -326,8 +326,11 @@ func TestMultiClusterRoleDecidesWhichFieldsApply(t *testing.T) {
 		"namespaces": {obj("Namespace", mcNamespace, nil)},
 		"clusters":   {obj("Cluster", "edge-1", nil), obj("Cluster", "edge-2", nil)},
 	})
-	if primary.MultiCluster.Role != "primary" || primary.MultiCluster.ClusterCount != 2 {
-		t.Errorf("primary = %+v, want role primary with 2 clusters", primary.MultiCluster)
+	if primary.MultiCluster.Role != "primary" {
+		t.Errorf("role = %q, want primary", primary.MultiCluster.Role)
+	}
+	if c := primary.MultiCluster.ClusterCount; c == nil || *c != 2 {
+		t.Errorf("clusterCount = %v, want 2 joined clusters", c)
 	}
 
 	secondary := buildAt(t, map[string][]unstructured.Unstructured{
@@ -357,6 +360,10 @@ func TestMultiClusterRoleDecidesWhichFieldsApply(t *testing.T) {
 	}
 	if standalone.MultiCluster.PrimaryName != nil {
 		t.Errorf("primaryName = %v, want null off a secondary", *standalone.MultiCluster.PrimaryName)
+	}
+	// Only a primary manages clusters. Zero would read as a primary managing none.
+	if c := standalone.MultiCluster.ClusterCount; c != nil {
+		t.Errorf("clusterCount = %d on a standalone cluster, want null", *c)
 	}
 }
 
