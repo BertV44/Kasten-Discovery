@@ -1,7 +1,9 @@
 package scan
 
 import (
+	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -746,26 +748,63 @@ func TestSelectorKindUsesKastenVocabulary(t *testing.T) {
 // TestEveryCollectedTargetFeedsTheReport: an unused read costs API load and
 // RBAC surface, and a denial on one of them flags the whole report as
 // RBAC-degraded over data no section consumes.
+//
+// The check is derived, not listed. It used to compare the plan against a
+// hand-maintained set of keys, which meant a target whose consumer was deleted
+// kept passing until somebody remembered to edit the set -- and the plan's own
+// comment records six reads removed for exactly that drift. Now it greps the
+// package's non-test sources for the key, so deleting the consumer breaks the
+// test on the next run.
 func TestEveryCollectedTargetFeedsTheReport(t *testing.T) {
-	consumed := map[string]bool{
-		"namespaces": true, "storageClasses": true, "volumeSnapshotClasses": true,
-		"k10Pods": true, "k10Deployments": true, "policies": true, "profiles": true,
-		"policyPresets": true, "transformSets": true, "blueprintBindings": true,
-		"blueprints": true, "runActions": true, "backupActions": true, "exportActions": true,
-		"restoreActions": true, "restorePoints": true, "clusterRoles": true,
-		"clusterRoleBindings": true, "roles": true, "roleBindings": true,
-		"routes": true, "scc": true, "virtualMachines": true,
-		"k10ConfigMaps": true, "k10Services": true, "k10Ingresses": true,
-		"k10NetworkPolicies": true, "mutatingWebhooks": true, "mcClusters": true,
-		"helmRelease": true, "pvcs": true, "volumeSnapshots": true,
-		"reportActions": true, "k10Reports": true, "nodes": true,
-		"licenseSecrets": true, "kubeVirts": true,
-	}
+	sources := packageSources(t)
+
 	for _, tg := range targets(Options{KastenNamespace: "kasten-io"}) {
-		if !consumed[tg.key] {
-			t.Errorf("target %q is collected but no section reads it; drop it or wire it up", tg.key)
+		if !strings.Contains(sources, strconv.Quote(tg.key)) {
+			t.Errorf("target %q is collected but its key appears in no source file, so no "+
+				"section reads it; drop it or wire it up", tg.key)
 		}
 	}
+
+	// Positive control: a key nothing consumes must not be found, or the check
+	// above passes vacuously and the guard it replaced was worth more.
+	if strings.Contains(sources, strconv.Quote("aKeyNoSectionReads")) {
+		t.Fatal("the consumer search matches a key nothing reads; the check is vacuous")
+	}
+	// And one that IS consumed must be found, so a search over the wrong files
+	// cannot pass by finding nothing at all.
+	if !strings.Contains(sources, strconv.Quote("policies")) {
+		t.Fatal("the consumer search cannot find a key that is certainly consumed")
+	}
+}
+
+// packageSources concatenates every non-test Go file in this package EXCEPT the
+// one declaring the collection plan.
+//
+// Excluding it is the whole point: a target's key is a literal in resources.go, so
+// searching that file too makes every key match its own declaration and the check
+// vacuous. It was, on the first attempt -- adding a target consuming nothing still
+// passed.
+func packageSources(t *testing.T) string {
+	t.Helper()
+	const planFile = "resources.go"
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("reading package directory: %v", err)
+	}
+	var sb strings.Builder
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") ||
+			strings.HasSuffix(e.Name(), "_test.go") || e.Name() == planFile {
+			continue
+		}
+		b, err := os.ReadFile(e.Name())
+		if err != nil {
+			t.Fatalf("reading %s: %v", e.Name(), err)
+		}
+		sb.Write(b)
+	}
+	return sb.String()
 }
 
 // TestImmutabilityDaysSurvivesDurationShapes: the fix that made duration

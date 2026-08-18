@@ -64,7 +64,18 @@ whole collector leans on:
 - The 16 best-practice checks emit `NOT_ASSESSED` rather than passing or failing
   when their input was not read, and the ransomware grade — one number, with no
   room in it for "partly unknown" — is withheld entirely when any pillar's input
-  is missing.
+  is missing. That includes a refused Helm read: authentication, KMS and audit
+  logging live only in the Helm values, so a denial there makes three checks
+  unassessed and withholds the grade, even though the `k10-config` ConfigMap
+  answered for the rest of the section.
+
+Every name a consumer guards on has to be a name the collector can actually emit.
+Thirteen renderer guards and seven diff guards once named sections it never
+declared, which made them dead code shaped like a safety net — so both consumers
+now expose their guard names and a test checks them against
+`scan.DeclarableSections`. The one section deliberately left unguarded is the RBAC
+inventory: it carries per-list accessibility flags and renders a partial-inventory
+note, and declaring it would hide the roles that *were* read.
 
 ### What `kdl scan` reads
 

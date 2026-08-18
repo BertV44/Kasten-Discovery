@@ -20,15 +20,29 @@
 //   - Parallel fetches with per-resource error capture, so one denied read costs
 //     one section rather than the whole scan.
 //
-// # What this collector does not do yet
+// # What this collector leaves empty, and how it says so
 //
-// It populates the inventory, the analyses the typed schema knows how to derive
-// (coverage, policy analysis) and the sections that are a straight reading of
-// the action, restore-point and profile listings. The scoring sections --
-// ransomware readiness, the 16 best-practice checks, effective RPO -- are not
-// computed; UnpopulatedSections lists them, and `kdl scan` prints that list on
-// every run. This is deliberate: those sections are verdicts, and a verdict
-// computed over a partially collected cluster is worse than an absent one.
+// It computes every section of the report. What it cannot do is compute them from
+// reads that did not happen, and the machinery for saying so is the part worth
+// understanding before changing anything here:
+//
+//   - sectionInputs names what each section cannot be right without. A section
+//     whose input was denied or failed is listed in the report's
+//     unpopulatedSections for that run, `kdl diff` skips it, and the HTML renderer
+//     replaces it with a note. Every name a consumer guards on must be a name this
+//     package can emit -- DeclarableSections is that contract, and a test in this
+//     package checks both consumers against it.
+//   - The 16 best-practice checks answer NOT_ASSESSED rather than passing or
+//     failing when their input was not read, because a check that fails because
+//     nobody looked paints "✗ CRITICAL" on the report's front page.
+//   - The ransomware grade is withheld entirely when any pillar's input is
+//     missing. It is one number, and there is no room in it for "partly unknown":
+//     a pillar scored zero for lack of evidence reads as a failed control.
+//
+// One figure is conditional rather than computed: catalog free space comes from
+// the kubelet's volume stats, which needs get on nodes/proxy -- not a permission
+// K10 itself requires. Absent it, the percentages stay null and
+// catalog.freeSpacePercent is declared.
 //
 // # Unvalidated against a live cluster
 //
